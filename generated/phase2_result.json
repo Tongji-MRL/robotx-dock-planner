@@ -1,0 +1,59 @@
+{
+  "phase": "approach_to_entrance",
+  "world": "scan_dock_deliver_task",
+  "bay_index": 2,
+  "release_confirmed": true,
+  "target_generated_by": [
+    "vrx_dock_2022_bay_to_dockspec",
+    "DockPlanner.plan"
+  ],
+  "approach_pose": {
+    "x": -494.597168840,
+    "y": 183.923597950,
+    "yaw": 1.0
+  },
+  "entrance_pose": {
+    "x": -488.113541169,
+    "y": 194.021249768,
+    "yaw": 1.0
+  },
+  "phase2_config": {
+    "base_thrust_n": 12.0,
+    "maximum_per_thruster_n": 20.0,
+    "maximum_heading_offset_rad": 0.18,
+    "acceptance_radius_m": 0.9,
+    "heading_tolerance_deg": 7.0,
+    "entrance_lateral_limit_m": 0.7,
+    "timeout_s": 100.0
+  },
+  "phase2_initial_pose": {
+    "x": -495.782251379,
+    "y": 183.380585987,
+    "yaw": 0.921208160
+  },
+  "phase2_initial_lateral_error_m": 0.703821955,
+  "phase2_duration_s": 90.450079711,
+  "phase2_control_cycles": 1809,
+  "final_pose": {
+    "x": -488.550371699,
+    "y": 193.275677137,
+    "yaw": 1.012101472
+  },
+  "final_distance_to_entrance_m": 0.864117735,
+  "final_heading_error_rad": -0.012101472,
+  "final_heading_error_deg": -0.693340,
+  "final_lateral_error_m": -0.035254396,
+  "maximum_absolute_thruster_command_n": 14.501586489,
+  "heading_error_sign_changes": 1,
+  "oscillation_detected": false,
+  "collision_detected_from_vrx_contacts": false,
+  "collision_pair": "",
+  "corridor_exceeded": false,
+  "passed_entrance": false,
+  "timed_out": false,
+  "publish_failed": false,
+  "zero_published": true,
+  "official_bay2_external_activation_observed": true,
+  "continued_to_stop": false,
+  "world_stopped": true
+}

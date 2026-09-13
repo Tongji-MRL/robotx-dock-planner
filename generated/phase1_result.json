@@ -1,0 +1,48 @@
+{
+  "phase": "start_to_approach",
+  "world": "scan_dock_deliver_task",
+  "bay_index": 2,
+  "release_confirmed": true,
+  "release_log": [
+    "Removing entity: 377",
+    "Detaching joint [377]",
+    "ScoringPlugin::OnRunning"
+  ],
+  "controller": {
+    "rate_hz": 20.0,
+    "base_thrust_n": 30.0,
+    "max_thrust_n": 50.0,
+    "acceptance_radius_m": 1.5,
+    "timeout_s": 180.0
+  },
+  "initial_pose": {
+    "x": -532.070317100,
+    "y": 161.988696026,
+    "yaw": 0.999943396
+  },
+  "approach_pose": {
+    "x": -494.597168840,
+    "y": 183.923597950,
+    "yaw": 1.0
+  },
+  "initial_distance_m": 43.420925405,
+  "initial_bearing_heading_error_rad": -0.470365713,
+  "runtime_s": 138.750676009,
+  "control_cycles": 2770,
+  "max_left_right_publish_skew_us": 121.045,
+  "final_pose": {
+    "x": -495.880911229,
+    "y": 183.293676931,
+    "yaw": 0.457994133
+  },
+  "final_distance_m": 1.429963291,
+  "final_bearing_heading_error_rad": -0.001821304,
+  "final_approach_pose_heading_error_rad": 0.542005867,
+  "reached": true,
+  "timed_out": false,
+  "interrupted": false,
+  "publish_failed": false,
+  "zero_published": true,
+  "world_stopped": true,
+  "note": "Position-only Phase 1 passed. Planned approach yaw was not aligned before stopping; no entrance or stop tracking was run."
+}

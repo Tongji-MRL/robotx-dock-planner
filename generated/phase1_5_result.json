@@ -1,0 +1,57 @@
+{
+  "phase": "approach_heading_alignment",
+  "world": "scan_dock_deliver_task",
+  "bay_index": 2,
+  "release_confirmed": true,
+  "target_generated_by": [
+    "vrx_dock_2022_bay_to_dockspec",
+    "DockPlanner.plan"
+  ],
+  "approach_pose": {
+    "x": -494.597168840,
+    "y": 183.923597950,
+    "yaw": 1.0
+  },
+  "entrance_pose": {
+    "x": -488.113541169,
+    "y": 194.021249768,
+    "yaw": 1.0
+  },
+  "align_config": {
+    "turn_gain": 25.0,
+    "maximum_differential_thrust_n": 12.0,
+    "forward_thrust_n": 0.0,
+    "initial_zero_thrust_settle_s": 2.0,
+    "heading_tolerance_deg": 5.0,
+    "stable_duration_s": 1.5,
+    "maximum_drift_m": 2.0,
+    "align_timeout_s": 60.0
+  },
+  "align_initial_pose": {
+    "x": -495.943449069,
+    "y": 183.265559337,
+    "yaw": 0.457796438
+  },
+  "target_entrance_heading": 1.0,
+  "align_initial_heading_error_rad": 0.542203562,
+  "align_initial_heading_error_deg": 31.066991,
+  "align_final_pose": {
+    "x": -495.787976917,
+    "y": 183.380611477,
+    "yaw": 0.924188702
+  },
+  "align_final_heading_error_rad": 0.075811298,
+  "align_final_heading_error_deg": 4.344696,
+  "align_position_drift_m": 0.193412990,
+  "align_duration_s": 31.950055841,
+  "align_control_cycles": 639,
+  "final_distance_to_approach_m": 1.308762082,
+  "maximum_left_right_publish_skew_us": 653.842,
+  "aligned": true,
+  "align_timed_out": false,
+  "align_drift_exceeded": false,
+  "publish_failed": false,
+  "zero_published": true,
+  "entered_entrance_phase": false,
+  "world_stopped": true
+}

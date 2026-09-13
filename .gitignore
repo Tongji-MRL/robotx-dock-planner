@@ -1,0 +1,19 @@
+# Python bytecode and interpreter caches
+__pycache__/
+*.pyc
+
+# Gazebo runtime state and logs
+generated/logs/
+generated/runtime/
+
+# Generated screenshots
+generated/*.png
+
+# Locally compiled Gazebo Transport tools
+generated/gz_dual_thrust_calibration
+generated/gz_phase1_approach
+generated/gz_phase1_5_align
+generated/gz_phase2_entrance
+
+# Local answer snapshot maintained by Codex
+answer.txt
