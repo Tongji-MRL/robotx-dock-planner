@@ -222,3 +222,34 @@ bash scripts/build_gz_phase2_entrance.sh
 0.864 m，航向误差 -0.693 度，横向偏差 -0.035 m；无 contact、走廊越界、超时或
 持续振荡，最大绝对推进器命令 14.502 N，成功归零。官方日志同时报告进入 bay2 的
 external dock activation zone。完整摘要见 `generated/phase2_result.json`。
+
+### Phase 3：entrance 到 stop
+
+`gz_phase3_stop` 只执行 entrance → stop，并由 shell 的成功退出门控接在
+`gz_phase2_entrance` 后；因此前置流程失败时不会进入 STOP。entrance、stop 和
+entrance_heading 均来自 `examples.phase1_target` 写出的 adapter/planner 结果。
+
+```bash
+python3 -B -m examples.phase1_target
+python3 -B -m examples.phase3_world
+bash scripts/build_gz_phase2_entrance.sh
+bash scripts/build_gz_phase3_stop.sh
+./generated/gz_phase2_entrance generated/phase1_target.json && \
+  ./generated/gz_phase3_stop generated/phase1_target.json
+```
+
+STOP 基础推力 6 N、单侧限幅 10 N，并在接近 stop 时连续衰减；参考点距 stop
+纵向剩余 0.40 m 后锁存零前推。控制器同时约束 0.70 m corridor、stop overshoot、
+后墙净空、contact、pose stale、90 s 超时和 publish failure，任何失败路径都重复归零。
+
+完整 Phase 2 前置流程约 261 s，官方 world 的 300 s running 状态不足以完成独立的
+低速停车与稳定观察。因此 `examples.phase3_world.py` 从本地官方
+`scan_dock_deliver_task.sdf` 生成一个不提交的副本，只把 scoring lifecycle 的
+`running_state_duration` 从 300 s 延长到 480 s，并加入 120 s `exit_delay`；几何、物理、
+WAM-V、release 和其余语义保持不变，测试会做 XML 语义比对。
+
+2026-09-13 实测：Phase 2 前置成功后，Phase 3 从距 stop 2.861 m 处开始，46.701 s
+后稳定停车。最终距 stop 0.377 m，heading error 0.215°，横向误差 0.053 m，最小
+后墙净空 1.673 m，最大绝对推力 6.091 N；无 collision、走廊越界、stop overshoot、
+后墙风险、超时或振荡，推力成功归零。VRX 日志确认 internal activation 并持续在泊位
+10 s 后进入 `<docked>`。完整摘要见 `generated/phase3_result.json`。

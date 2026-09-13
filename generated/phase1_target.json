@@ -30,6 +30,11 @@
     "y": 194.02124976800536,
     "yaw": 1.0
   },
+  "stop_pose": {
+    "x": -487.0329365574029,
+    "y": 195.70419173762116,
+    "yaw": 1.0
+  },
   "planner_status": "SUCCESS",
   "planner_reason": "Geometric plan generated; collision and motion feasibility are not checked."
 }

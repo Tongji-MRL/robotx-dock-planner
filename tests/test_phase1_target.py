@@ -25,6 +25,12 @@ class Phase1TargetTests(unittest.TestCase):
         self.assertEqual(record["entrance_pose"]["x"], expected.waypoints[2].x)
         self.assertEqual(record["entrance_pose"]["y"], expected.waypoints[2].y)
         self.assertEqual(record["entrance_pose"]["yaw"], expected.waypoints[2].yaw)
+        self.assertEqual(record["stop_pose"]["x"], expected.waypoints[3].x)
+        self.assertEqual(record["stop_pose"]["y"], expected.waypoints[3].y)
+        self.assertEqual(record["stop_pose"]["yaw"], expected.waypoints[3].yaw)
+        self.assertEqual(
+            record["stop_pose"]["yaw"], record["entrance_pose"]["yaw"]
+        )
         self.assertEqual(record["bay_index"], 2)
         self.assertEqual(record["planner_config"]["approach_distance"], 12.0)
 

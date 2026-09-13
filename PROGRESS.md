@@ -1,8 +1,8 @@
 # DockPlanner V0 工作进度与续接说明
 
-更新时间：2026-09-12（Asia/Shanghai）
+更新时间：2026-09-13（Asia/Shanghai）
 
-本文档用于在新的 Codex thread 中无损继续 RobotX 2026 Task 3 靠泊规划工作。当前已完成 Phase 2 动态验证；**尚未开始 Phase 3，也不应在读取本文档后自动运行 Phase 3**。
+本文档用于在新的 Codex thread 中无损继续 RobotX 2026 Task 3 靠泊规划工作。当前已完成 Phase 3 `entrance -> stop` 动态验证；尚未开始任何后续阶段，读取本文档后不应自动运行 Gazebo 或发送推力。
 
 ## 1. 项目目标与工作区边界
 
@@ -21,7 +21,14 @@ USV pose -> approach pose -> entrance pose -> stop pose
 - 团队正式工作区：`/home/y/robotx_team_ws/robotx_workspace`，当前实验阶段不得修改
 - 团队仿真仓库位于正式工作区的 `src/robotx_sim`，当前没有向其中同步代码
 
-当前 `dock_planner_v0` 本身不是 Git 仓库；不要假定存在可提交的 Git 状态。本轮没有执行 `git push`。
+当前 `dock_planner_v0` 是独立 Git 仓库，分支为 `main`。Phase 2 成功后的 checkpoint 为：
+
+```text
+6ccd95116e97f86da197334fc2e8a6fe106f7bf8
+Validate DockPlanner through approach-to-entrance docking
+```
+
+远程 `origin` 为 `https://github.com/Tongji-MRL/robotx-dock-planner.git`。Phase 3 文件和结果当前尚未提交，本轮没有执行 `git push`，也没有修改团队正式工作区。
 
 ## 2. 当前环境与仿真入口
 
@@ -44,7 +51,9 @@ bash /home/y/robotx_ws/run_vrx.sh \
 
 `run_vrx.sh` 会 source `/opt/ros/humble/setup.bash` 和 `/home/y/robotx_ws/install/setup.bash`，设置 Gazebo resource path，再通过 `ros2 launch vrx_gz competition.launch.py` 启动比赛 world。
 
-动态测试使用 Gazebo Transport 的本地 socket。在受限 sandbox 中可能需要允许相关命令在 sandbox 外启动。交接时没有 Gazebo、launch 或控制器进程在运行。
+动态测试使用 Gazebo Transport 的本地 socket。在受限 sandbox 中可能需要允许相关命令在 sandbox 外启动。Phase 3 完成后已停止 world；交接时没有 Gazebo、launch 或控制器进程在运行。
+
+完整 Phase 2 前置流程耗时约 261 s，官方 300 s running 窗口不足以再完成低速 Phase 3 和稳定停车观察。为本阶段生成了 `generated/scan_dock_deliver_phase3.sdf`：它从本地官方 world 复制，只将 scoring plugin 的 `running_state_duration` 从 300 s 延长到 480 s，并加入 120 s `exit_delay`。几何、物理、动态 WAM-V、release 和其余 world 语义未改；`tests/test_phase3_world.py` 做 XML 语义核对。该生成 SDF 被 Git 忽略，正式 VRX 源码/安装目录未修改。
 
 ## 3. DockPlanner V0.1 当前设计
 
@@ -156,7 +165,7 @@ adapter 和 planner 自动计算：
 | entrance | `-488.11354116913920` | `194.02124976800536` | `1.0` |
 | stop | `-487.03293655740290` | `195.70419173762115` | `1.0` |
 
-这些数值只用于核对。新控制程序仍必须调用 `vrx_dock_2022_bay_to_dockspec()` 和 `DockPlanner.plan()`，不能复制坐标。
+这些数值只用于核对。动态目标由 `examples/phase1_target.py` 调用 `vrx_dock_2022_bay_to_dockspec()` 和 `DockPlanner.plan()` 后写入 JSON；控制器只读取该自动生成结果，没有复制或手写目标坐标。
 
 ## 4. 当前重要文件及用途
 
@@ -173,7 +182,8 @@ adapter 和 planner 自动计算：
 - `examples/basic.py`：最小 DockPlanner API 示例。
 - `examples/vrx_reference.py`：VRX 三 bay 的 DockSpec 和规划结果示例。
 - `examples/gazebo_static.py`：调用 adapter/planner 生成最小静态 Gazebo world、markers、heading 线和 JSON。
-- `examples/phase1_target.py`：为动态控制自动生成 bay_2 目标 JSON。当前 JSON 显式包含 DockSpec、approach、entrance；planner 已生成 stop。Phase 3 应扩展此输出和相应测试以显式携带 stop，不能手写 stop。
+- `examples/phase1_target.py`：为动态控制自动生成 bay_2 目标 JSON，显式包含 DockSpec、approach、entrance、stop 和生成链信息。
+- `examples/phase3_world.py`：由本地官方 world 生成只延长 scoring 生命周期的 Phase 3 world 副本；不修改 VRX 源码。
 - `examples/__init__.py`：examples 包标记。
 
 ### `scripts/`
@@ -187,6 +197,8 @@ adapter 和 planner 自动计算：
 - `scripts/build_gz_phase1_5_align.sh`：构建 Phase 1.5 控制器。
 - `scripts/gz_phase2_entrance.cc`：实际 Phase 2，执行 start → approach → ALIGN → entrance，包含 corridor、contact、超时和归零检查；不会驶向 stop。
 - `scripts/build_gz_phase2_entrance.sh`：构建 Phase 2 控制器。
+- `scripts/gz_phase3_stop.cc`：Phase 3 单段控制器，只执行 entrance → stop，包含入口门控、低速/减速、横向/航向修正、stop/后墙/corridor/contact/超时/publish 安全检查及统一归零。
+- `scripts/build_gz_phase3_stop.sh`：构建 Phase 3 控制器。
 
 这些 C++ 程序是 standalone Gazebo Transport 实验工具，不是正式 ROS 2 controller。Phase 2 实测后修正了结果统计：源码不再把驶向 entrance 的位移误记为 ALIGN drift，并已重新构建；控制行为未改变。
 
@@ -196,6 +208,7 @@ adapter 和 planner 自动计算：
 - `tests/test_vrx_reference.py`：VRX adapter、三个 bay 相对位置、任意平移旋转、heading 和官方 world 数值。
 - `tests/test_gazebo_static.py`：静态 SDF/JSON 一致性和真实 WAM-V collision footprint 净空。
 - `tests/test_phase1_target.py`：动态目标必须由 adapter + planner 自动生成。
+- `tests/test_phase3_world.py`：验证生成 world 除 scoring running 时间和 exit delay 外与本地官方 world 语义一致。
 
 ### `generated/`
 
@@ -205,10 +218,13 @@ adapter 和 planner 自动计算：
 - `generated/gz_phase1_approach`：已构建 Phase 1 程序。
 - `generated/gz_phase1_5_align`：已构建 Phase 1.5 程序。
 - `generated/gz_phase2_entrance`：已构建 Phase 2 程序。
+- `generated/gz_phase3_stop`：已构建 Phase 3 程序。
+- `generated/scan_dock_deliver_phase3.sdf`：由脚本生成、Git 忽略的生命周期延长 world 副本。
 - `generated/phase1_target.json`：Python adapter/planner 自动生成的动态目标。
 - `generated/phase1_result.json`：Phase 1 实测结果。
 - `generated/phase1_5_result.json`：Phase 1.5 实测结果。
 - `generated/phase2_result.json`：Phase 2 实测结果。
+- `generated/phase3_result.json`：Phase 3 成功实测的完整轻量摘要。
 - `generated/logs/`：静态 Gazebo 和测试历史日志。
 
 ### 顶层文档
@@ -485,9 +501,81 @@ OnExternalActivationEvent(): 1
 
 静态真实 WAM-V footprint 检查此前确认：4 m bay 中，按约 `±1.23 m` 横向 collision footprint，居中时每侧约 `0.77 m` 余量。因此 `0.70 m` corridor limit 已接近可用宽度，Phase 3 仍需保守。
 
-## 11. 测试基线
+## 11. Phase 3：entrance → stop
 
-当前静态单元测试基线是 **24/24 通过**：
+结果：`generated/phase3_result.json`
+
+完整流程为 `start -> approach -> ALIGN -> entrance -> STOP -> thrust zero`。Phase 3 控制器是独立进程，通过 shell 的成功退出门控串联，保证只有 Phase 2 成功后才启动：
+
+```bash
+./generated/gz_phase2_entrance generated/phase1_target.json && \
+  ./generated/gz_phase3_stop generated/phase1_target.json
+```
+
+目标文件中的 entrance、stop 和 entrance_heading 均由 adapter + planner 生成。STOP 参数和安全边界：
+
+```text
+rate=20 Hz
+base thrust=6 N（Phase 2 为 12 N）
+max per-thruster thrust=10 N
+turn gain=18, maximum turn term=3 N
+maximum centerline heading offset=0.10 rad
+acceptance: distance<=0.45 m, |remaining_along|<=0.40 m,
+            |lateral|<=0.35 m, |heading error|<=7 deg
+stable duration=1.0 s
+initial zero settle=1.5 s
+zero-forward latch at remaining_along<=0.40 m
+timeout=90 s
+corridor limit=0.70 m
+maximum stop overshoot=0.35 m
+WAM-V forward extent including margin=2.70 m
+minimum allowed back-wall clearance=0.70 m
+planner stop static back-wall clearance=1.30 m
+```
+
+安全条件包括 WAM-V contact、corridor 越界、超过 stop、距后墙过近、pose stale、超时和 publish failure；任一触发都立即进入重复左右零推力流程。一旦进入 stop zone，零前推锁存，禁止重新向前推。
+
+### 最终成功实测
+
+Phase 2 前置流程成功：`reached=true`、`aligned=true`、`entrance_reached=true`，总运行 `261.300646137 s`。到达入口后的 pose 为 `(-488.554311995, 193.278056658, 1.009630683)`；入口距离 `0.864068817 m`，heading error `-0.009630683 rad`，lateral error `-0.030653091 m`。无 collision、corridor 越界、穿过 entrance、超时或 publish failure，且成功归零。
+
+Phase 3 结果：
+
+```text
+initial pose:
+  x=-488.553154732, y=193.280266598, yaw=1.009626621
+stop target:
+  x=-487.032936557, y=195.704191738, yaw=1.0
+initial distance to entrance=0.861577706 m
+initial distance to stop=2.861201912 m
+initial longitudinal=-0.861040060 m
+initial heading error=-0.009626621 rad
+initial lateral error=-0.030432857 m
+runtime=46.701276112 s, cycles=924
+final pose:
+  x=-487.278987447, y=195.418754267, yaw=0.996240395
+final stop distance=0.376849559 m
+final remaining_along=0.373129213 m
+final heading error=0.003759605 rad = 0.215410 deg
+final lateral error=0.052822161 m
+minimum back-wall clearance=1.673129213 m
+maximum absolute thrust=6.091185967 N
+heading sign changes=0, oscillation=false
+collision=false, corridor_exceeded=false, stop_overshot=false
+back_wall_too_close=false, timed_out=false, pose_stale=false
+publish_failed=false, final_within_tolerance=true
+zero_published=true, world_stopped=true
+```
+
+VRX 日志确认进入 bay2 internal activation zone，并持续在 dock 内 10 s 后进入 `<docked>`。因此 Phase 3 的 stop 接近、航向、横向、安全净空、无碰撞和归零条件均通过。
+
+第一次 STOP 尝试使用 `remaining_along<=0.55 m` 的零前推锁存，安全停在距 stop `0.524536217 m`，未进入 0.45 m 成功圈；无碰撞、越界或后墙风险，且成功归零。随后只把锁存阈值后移至 `0.40 m`，没有引入复杂 PID/MPC。
+
+第一次尝试还暴露了官方 scoring 在仿真时间 320 s 结束的问题。最终成功验证使用第 2 节所述的生命周期延长 world；必须把它描述为同一官方任务内容的生命周期测试副本，不能误称为完全未改的官方 SDF。
+
+## 12. 测试基线
+
+当前静态单元测试基线是 **25/25 通过**：
 
 ```bash
 cd /home/y/robotx_ws/dock_planner_v0
@@ -503,65 +591,33 @@ bash scripts/build_gz_dual_thrust_calibration.sh
 bash scripts/build_gz_phase1_approach.sh
 bash scripts/build_gz_phase1_5_align.sh
 bash scripts/build_gz_phase2_entrance.sh
+bash scripts/build_gz_phase3_stop.sh
 ```
 
-## 12. 已知但暂未处理的问题
+## 13. 已知但暂未处理的问题
 
 1. **WaveVisual teardown segmentation fault**：Ctrl-C 停止 world 后偶尔发生。它出现在控制器退出、推力归零之后，目前没有证据表明影响 Phase 结果。
 2. **RobotX 2026 官方 dock 尺寸未确认**：当前 4 m × 6 m 和三 bay 坐标仅为 `VRX_REFERENCE_GEOMETRY`。
 3. **正式团队 ROS 2 interface 未接入**：尚未接团队 workspace、ROS 2 topic/action、DDS 或 ArduPilot。
 4. **obstacle / RRT* 未接入**：obstacles 只是 optional 预留，非空输入尚不支持。
 5. **perception 未接入**：尚未接 dock pose、confidence、TF、严格 entrance pose 或 UAV 感知。
-6. **Phase 2 接受半径较宽**：最终 reference point 距入口中心 `0.864 m`，符合 0.9 m 条件；Phase 3 不能假定船恰好在入口中心。
+6. **Phase 2 接受半径较宽**：最终 reference point 距入口中心约 `0.864 m`；Phase 3 已验证入口门控和对该初始误差的处理，但未来控制器仍不能假定船恰好在入口中心。
 7. **正式任务耗时未验证**：简单控制器较慢，要区分分段可行性验证和比赛时间性能。
-8. **控制代码尚未抽象**：Phase 1/1.5/2 的 standalone C++ 有重复状态机逻辑。先保留可复现实验，Phase 3 后再考虑重构。
+8. **控制代码尚未抽象**：Phase 1/1.5/2/3 的 standalone C++ 有重复状态机逻辑。按阶段要求暂不重构，先保留可复现实验。
+9. **正式比赛时限性能仍未解决**：Phase 3 的几何/动力学可行性已通过，但完整简单控制流程约 308 s，最终验证依赖延长 scoring lifecycle；不能据此声称满足正式比赛时间限制。
 
-## 13. 下一步：Phase 3（尚未执行）
+## 14. 当前停点
 
-下一步明确为：
-
-```text
-Phase 3 = entrance -> stop 单段动态验证
-```
-
-本次交接**没有创建 Phase 3 控制器、没有运行 Phase 3、没有启动 Gazebo、没有发送任何推力**。
-
-下一 thread 应先读取本文档和 Phase 2 源码/结果，再设计 Phase 3。建议最低要求：
-
-- 继续由 adapter + planner 自动取得 stop，禁止手写坐标。
-- 以已验证流程到达 entrance，只有 entrance 成功后才进入 STOP 状态。
-- STOP 段保持 `entrance_heading`，使用更低推力和受限横向修正。
-- 考虑 Phase 2 结束时距入口中心最多仍有 0.9 m，不能假定初始误差为零。
-- 继续使用 `/vrx/contacts`，发生 WAM-V contact 立即归零。
-- 保留 0.70 m corridor 检查，并增加不得穿过后壁/超出 bay depth 的纵向安全检查。
-- 设置 stop 接受半径、heading tolerance、单段和总超时；所有退出路径左右 thrust 归零。
-- 记录 stop 初始/最终 pose、distance、heading/lateral/longitudinal error、最大推力、碰撞、走廊、后壁、振荡、超时、归零结果。
-- 只做 Phase 3，不继续 RRT*、perception、正式 ROS 2 或团队仓库集成。
-
-## 14. 下一条 Codex thread 可直接复制的继续工作提示词
+Phase 3 已完成。当前已验证链路为：
 
 ```text
-继续 RobotX Task 3 DockPlanner 工作。
-
-请先完整读取：
-~/robotx_ws/dock_planner_v0/PROGRESS.md
-
-它是当前项目的交接基线。当前已经完成 DockPlanner V0.1、VRX dock_2022 adapter、静态 Gazebo/真实 WAM-V footprint 验证、直线推进校准，以及动态 Phase 1、Phase 1.5、Phase 2；24/24 静态测试通过。Phase 2 已成功到达 bay_2 entrance，并可靠归零。Phase 3 尚未执行。
-
-现在继续 Phase 3：entrance -> stop 单段动态验证。
-
-约束：
-1. 只修改 ~/robotx_ws/dock_planner_v0。
-2. 不修改 ~/robotx_ws/src/vrx。
-3. 不修改 ~/robotx_team_ws/robotx_workspace。
-4. 使用官方 scan_dock_deliver_task、真实动态 WAM-V 和官方自动 /vrx/release。
-5. 使用现有 vrx_dock_2022_bay_to_dockspec() + DockPlanner.plan() 自动生成 bay_2 的 approach、entrance、stop；approach_distance=12 m，禁止手写目标坐标。
-6. 先复现 start -> approach -> ALIGN -> entrance，只有 entrance 成功后才进入 STOP 状态。
-7. STOP 段保持 entrance_heading，以低推力同时修正横向位置和 heading，沿泊位内部方向前进到 stop。
-8. 保留 /vrx/contacts、0.70 m corridor limit、pose stale、超时、publish failure 检查，并增加不得越过 bay 后壁/超出 bay depth 的纵向安全检查。
-9. 所有正常、异常、信号、碰撞和超时退出路径都必须将左右 thrust 归零。
-10. 记录 Phase 3 初始/最终 pose、到 stop 的距离、heading error、lateral/longitudinal error、最大 thrust、振荡、collision、corridor、back-wall、timeout 和归零状态。
-11. 只完成 Phase 3；不要继续 RRT*、障碍物、perception、正式 ROS 2/DDS/ArduPilot 或团队仓库集成。
-
-开始前先核对现有 Phase 2 源码、generated/phase2_result.json、target 生成链和当前测试。先说明 Phase 3 的最小控制/安全方案，再按我的确认执行动态测试；不要在没有确认时发送非零推力。
+DockPlanner V0.1 geometry
+  + VRX adapter
+  + static WAM-V clearance
+  + Phase 1 start -> approach
+  + Phase 1.5 ALIGN
+  + Phase 2 approach -> entrance
+  + Phase 3 entrance -> stop
 ```
+
+没有开始 RRT*、障碍物、perception、正式 ROS 2 interface、DDS、ArduPilot、团队 workspace 集成或下一阶段。下一步应先由用户决定是否为 Phase 3 成功结果创建新的本地 Git checkpoint；不得自动提交或 push。

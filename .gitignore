@@ -14,6 +14,8 @@ generated/gz_dual_thrust_calibration
 generated/gz_phase1_approach
 generated/gz_phase1_5_align
 generated/gz_phase2_entrance
+generated/gz_phase3_stop
+generated/scan_dock_deliver_phase3.sdf
 
 # Local answer snapshot maintained by Codex
 answer.txt

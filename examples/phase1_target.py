@@ -20,8 +20,8 @@ STOP_DISTANCE_INSIDE = 2.0
 
 def build_phase1_target() -> dict:
     dock = vrx_dock_2022_bay_to_dockspec(*DOCK_WORLD_POSE, BAY_INDEX)
-    # Phase 1 only consumes approach_pose. The initial pose is recorded at
-    # runtime by the Gazebo controller and does not affect approach geometry.
+    # The dynamic controllers consume the planner-generated approach, entrance,
+    # and stop poses. The runtime initial pose does not affect their geometry.
     planning_api_pose = Pose2D(0.0, 0.0, 0.0)
     result = DockPlanner(
         PlannerConfig(APPROACH_DISTANCE, STOP_DISTANCE_INSIDE)
@@ -44,6 +44,7 @@ def build_phase1_target() -> dict:
         "dock_spec": asdict(dock),
         "approach_pose": asdict(result.approach_pose),
         "entrance_pose": asdict(result.waypoints[2]),
+        "stop_pose": asdict(result.waypoints[3]),
         "planner_status": result.status.value,
         "planner_reason": result.reason,
     }
