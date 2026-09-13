@@ -2,7 +2,7 @@
 
 更新时间：2026-09-13（Asia/Shanghai）
 
-本文档用于在新的 Codex thread 中无损继续 RobotX 2026 Task 3 靠泊规划工作。当前已完成 Phase 3 `entrance -> stop` 动态验证；尚未开始任何后续阶段，读取本文档后不应自动运行 Gazebo 或发送推力。
+本文档用于在新的 Codex thread 中无损继续 RobotX 2026 Task 3 靠泊规划工作。当前已完成 Phase 1 / 1.5 / 2 / 3 分段验证，并完成官方原始 300 s lifecycle 内的 `start -> approach -> ALIGN -> entrance -> stop -> docked` 连续动态验证；尚未开始任何后续阶段，读取本文档后不应自动运行 Gazebo 或发送推力。
 
 ## 1. 项目目标与工作区边界
 
@@ -21,14 +21,14 @@ USV pose -> approach pose -> entrance pose -> stop pose
 - 团队正式工作区：`/home/y/robotx_team_ws/robotx_workspace`，当前实验阶段不得修改
 - 团队仿真仓库位于正式工作区的 `src/robotx_sim`，当前没有向其中同步代码
 
-当前 `dock_planner_v0` 是独立 Git 仓库，分支为 `main`。Phase 2 成功后的 checkpoint 为：
+当前 `dock_planner_v0` 是独立 Git 仓库，分支为 `main`。Phase 3 成功后的最新 checkpoint 为：
 
 ```text
-6ccd95116e97f86da197334fc2e8a6fe106f7bf8
-Validate DockPlanner through approach-to-entrance docking
+9db1755953c0b9d242e01c04f0bb94d1d436e448
+Complete Phase 3 entrance-to-stop docking validation
 ```
 
-远程 `origin` 为 `https://github.com/Tongji-MRL/robotx-dock-planner.git`。Phase 3 文件和结果当前尚未提交，本轮没有执行 `git push`，也没有修改团队正式工作区。
+远程 `origin` 为 `https://github.com/Tongji-MRL/robotx-dock-planner.git`，该 checkpoint 已在 `origin/main`。连续流程控制器、测试、文档及结果是 checkpoint 之后的新改动，当前尚未提交或 push，也没有修改团队正式工作区。
 
 ## 2. 当前环境与仿真入口
 
@@ -51,9 +51,9 @@ bash /home/y/robotx_ws/run_vrx.sh \
 
 `run_vrx.sh` 会 source `/opt/ros/humble/setup.bash` 和 `/home/y/robotx_ws/install/setup.bash`，设置 Gazebo resource path，再通过 `ros2 launch vrx_gz competition.launch.py` 启动比赛 world。
 
-动态测试使用 Gazebo Transport 的本地 socket。在受限 sandbox 中可能需要允许相关命令在 sandbox 外启动。Phase 3 完成后已停止 world；交接时没有 Gazebo、launch 或控制器进程在运行。
+动态测试使用 Gazebo Transport 的本地 socket。在受限 sandbox 中可能需要允许相关命令在 sandbox 外启动。连续验证完成后已停止 world；交接时没有 Gazebo、launch 或控制器进程在运行。
 
-完整 Phase 2 前置流程耗时约 261 s，官方 300 s running 窗口不足以再完成低速 Phase 3 和稳定停车观察。为本阶段生成了 `generated/scan_dock_deliver_phase3.sdf`：它从本地官方 world 复制，只将 scoring plugin 的 `running_state_duration` 从 300 s 延长到 480 s，并加入 120 s `exit_delay`。几何、物理、动态 WAM-V、release 和其余 world 语义未改；`tests/test_phase3_world.py` 做 XML 语义核对。该生成 SDF 被 Git 忽略，正式 VRX 源码/安装目录未修改。
+历史 Phase 3 分段验证因完整 Phase 2 前置流程约 261 s，曾使用 `generated/scan_dock_deliver_phase3.sdf` 延长 scoring lifecycle；该生成 SDF 被 Git 忽略。最终连续验证没有使用该副本，而是使用未经修改的官方原始 `scan_dock_deliver_task` 及其 300 s running window。正式 VRX 源码/安装目录始终未修改。
 
 ## 3. DockPlanner V0.1 当前设计
 
@@ -199,6 +199,8 @@ adapter 和 planner 自动计算：
 - `scripts/build_gz_phase2_entrance.sh`：构建 Phase 2 控制器。
 - `scripts/gz_phase3_stop.cc`：Phase 3 单段控制器，只执行 entrance → stop，包含入口门控、低速/减速、横向/航向修正、stop/后墙/corridor/contact/超时/publish 安全检查及统一归零。
 - `scripts/build_gz_phase3_stop.sh`：构建 Phase 3 控制器。
+- `scripts/gz_full_docking.cc`：完整连续控制器，显式管理 GO_TO_APPROACH、ALIGN、GO_TO_ENTRANCE、GO_TO_STOP、DONE、FAILED，并统一处理全程安全停止。
+- `scripts/build_gz_full_docking.sh`：构建完整连续控制器。
 
 这些 C++ 程序是 standalone Gazebo Transport 实验工具，不是正式 ROS 2 controller。Phase 2 实测后修正了结果统计：源码不再把驶向 entrance 的位移误记为 ALIGN drift，并已重新构建；控制行为未改变。
 
@@ -209,6 +211,7 @@ adapter 和 planner 自动计算：
 - `tests/test_gazebo_static.py`：静态 SDF/JSON 一致性和真实 WAM-V collision footprint 净空。
 - `tests/test_phase1_target.py`：动态目标必须由 adapter + planner 自动生成。
 - `tests/test_phase3_world.py`：验证生成 world 除 scoring running 时间和 exit delay 外与本地官方 world 语义一致。
+- `tests/test_full_docking_source.py`：核对连续控制器的显式状态、自动生成目标读取和经过验证的分段参数。
 
 ### `generated/`
 
@@ -219,12 +222,14 @@ adapter 和 planner 自动计算：
 - `generated/gz_phase1_5_align`：已构建 Phase 1.5 程序。
 - `generated/gz_phase2_entrance`：已构建 Phase 2 程序。
 - `generated/gz_phase3_stop`：已构建 Phase 3 程序。
+- `generated/gz_full_docking`：已构建的连续控制器 ELF；Git 忽略，可由构建脚本重建。
 - `generated/scan_dock_deliver_phase3.sdf`：由脚本生成、Git 忽略的生命周期延长 world 副本。
 - `generated/phase1_target.json`：Python adapter/planner 自动生成的动态目标。
 - `generated/phase1_result.json`：Phase 1 实测结果。
 - `generated/phase1_5_result.json`：Phase 1.5 实测结果。
 - `generated/phase2_result.json`：Phase 2 实测结果。
 - `generated/phase3_result.json`：Phase 3 成功实测的完整轻量摘要。
+- `generated/full_docking_result.json`：官方 300 s 基线、最小速度优化和连续成功实测的轻量摘要。
 - `generated/logs/`：静态 Gazebo 和测试历史日志。
 
 ### 顶层文档
@@ -573,9 +578,77 @@ VRX 日志确认进入 bay2 internal activation zone，并持续在 dock 内 10 
 
 第一次尝试还暴露了官方 scoring 在仿真时间 320 s 结束的问题。最终成功验证使用第 2 节所述的生命周期延长 world；必须把它描述为同一官方任务内容的生命周期测试副本，不能误称为完全未改的官方 SDF。
 
-## 12. 测试基线
+## 12. 完整连续自动靠泊验证
 
-当前静态单元测试基线是 **25/25 通过**：
+新增独立 `gz_full_docking`，没有修改四个已验证分段控制器。它从同一份 adapter +
+DockPlanner 目标 JSON 读取 approach、entrance、stop 和 entrance_heading，并显式执行：
+
+```text
+GO_TO_APPROACH -> ALIGN -> GO_TO_ENTRANCE -> GO_TO_STOP -> DONE
+                                                        \-> FAILED
+```
+
+每个阶段只有满足原成功条件才切换。全程监控 collision、corridor exceeded、pose stale、
+阶段 timeout、官方 running timeout 和 publish failure；STOP 还监控 stop overshoot 与
+back-wall risk。任一失败立即进入 FAILED，所有终态和中断路径都重复发布左右零推力。
+
+### 官方 300 s 基线及最小优化
+
+第一次在未经修改的官方原始 `scan_dock_deliver_task` 上使用全部原始参数。控制器连接时
+官方 elapsed=26 s，阶段耗时为 138.500、31.900、90.550 s；进入 GO_TO_STOP 时只剩
+约 14 s，13.450 s 后官方 running window 到期，安全进入 FAILED。该次没有 collision、
+corridor 越界或 back-wall risk，并成功归零。由此确认主要瓶颈是 GO_TO_APPROACH。
+
+按“先定位慢阶段、再做最小速度优化”的要求，只在独立连续控制器中把 approach 基础
+推力从 30 N 提至 45 N，保留 50 N 单侧限幅及原有转向、减速、接受条件和 timeout；
+ALIGN、ENTRANCE、STOP 的逻辑与参数、DockPlanner 几何和 world 300 s 时限均未改。
+
+### 连续成功实测
+
+最终复测仍使用未经修改的官方原始 world。控制器在官方 elapsed=10 s 开始，结果为：
+
+```text
+state=DONE
+controller total runtime=273.451075171 s
+official task elapsed at DONE=284.0 s
+within official 300 s window=true（余量 16 s）
+
+GO_TO_APPROACH -> ALIGN:
+  duration=103.250062973 s
+  pose=(-495.966590550, 183.324986943, 0.421056100)
+ALIGN -> GO_TO_ENTRANCE:
+  duration=33.149999221 s
+  pose=(-495.701861177, 183.477048598, 0.921261729)
+GO_TO_ENTRANCE -> GO_TO_STOP:
+  duration=89.949998255 s
+  pose=(-488.581526162, 193.253402928, 1.011877089)
+GO_TO_STOP -> DONE:
+  duration=46.600003966 s
+  pose=(-487.274690560, 195.401544757, 0.998015416)
+
+final pose after zero:
+  (-487.274663223, 195.412616071, 0.997995111)
+final stop distance=0.378745495 m
+final heading error=0.002004889 rad = 0.114872 deg
+final lateral error=0.045866971 m
+minimum back-wall clearance=1.675957938 m
+maximum absolute thrust=50.0 N
+collision=false, corridor_exceeded=false, pose_stale=false
+timed_out=false, publish_failed=false, stop_overshot=false
+back_wall_risk=false, docked_observed=true, zero_published=true
+```
+
+`docked_observed=true` 来自官方 bay_2 internal contain topic 连续保持至少 10 s；任务总状态
+在控制器 DONE 时仍为 `running`，这是因为完整 scan/dock/deliver scoring lifecycle 不会因
+本次只完成 docking 子任务而提前结束。成功结果后主动停止 world；已知 WaveVisual teardown
+segmentation fault 发生在控制器 DONE 和双推力归零之后，不影响上述结果。
+
+完整结构化记录保存在 `generated/full_docking_result.json`。没有接入 RRT*、障碍物、
+perception、正式 ROS 2 interface、DDS、ArduPilot 或团队 workspace。
+
+## 13. 测试基线
+
+当前静态单元测试基线是 **27/27 通过**：
 
 ```bash
 cd /home/y/robotx_ws/dock_planner_v0
@@ -592,9 +665,10 @@ bash scripts/build_gz_phase1_approach.sh
 bash scripts/build_gz_phase1_5_align.sh
 bash scripts/build_gz_phase2_entrance.sh
 bash scripts/build_gz_phase3_stop.sh
+bash scripts/build_gz_full_docking.sh
 ```
 
-## 13. 已知但暂未处理的问题
+## 14. 已知但暂未处理的问题
 
 1. **WaveVisual teardown segmentation fault**：Ctrl-C 停止 world 后偶尔发生。它出现在控制器退出、推力归零之后，目前没有证据表明影响 Phase 结果。
 2. **RobotX 2026 官方 dock 尺寸未确认**：当前 4 m × 6 m 和三 bay 坐标仅为 `VRX_REFERENCE_GEOMETRY`。
@@ -602,13 +676,12 @@ bash scripts/build_gz_phase3_stop.sh
 4. **obstacle / RRT* 未接入**：obstacles 只是 optional 预留，非空输入尚不支持。
 5. **perception 未接入**：尚未接 dock pose、confidence、TF、严格 entrance pose 或 UAV 感知。
 6. **Phase 2 接受半径较宽**：最终 reference point 距入口中心约 `0.864 m`；Phase 3 已验证入口门控和对该初始误差的处理，但未来控制器仍不能假定船恰好在入口中心。
-7. **正式任务耗时未验证**：简单控制器较慢，要区分分段可行性验证和比赛时间性能。
-8. **控制代码尚未抽象**：Phase 1/1.5/2/3 的 standalone C++ 有重复状态机逻辑。按阶段要求暂不重构，先保留可复现实验。
-9. **正式比赛时限性能仍未解决**：Phase 3 的几何/动力学可行性已通过，但完整简单控制流程约 308 s，最终验证依赖延长 scoring lifecycle；不能据此声称满足正式比赛时间限制。
+7. **正式时限余量较小**：一次官方原始 world 实测在 elapsed=284 s 完成，余量 16 s。已证明当前条件下可在 300 s 内完成，但还不是多次统计或比赛鲁棒性保证。
+8. **控制代码尚未抽象**：Phase 1/1.5/2/3 和连续验证的 standalone C++ 有重复逻辑。按阶段要求暂不重构，先保留可复现实验。
 
-## 14. 当前停点
+## 15. 当前停点
 
-Phase 3 已完成。当前已验证链路为：
+完整连续验证已完成。当前已验证链路为：
 
 ```text
 DockPlanner V0.1 geometry
@@ -618,6 +691,7 @@ DockPlanner V0.1 geometry
   + Phase 1.5 ALIGN
   + Phase 2 approach -> entrance
   + Phase 3 entrance -> stop
+  + official 300 s continuous start -> docked
 ```
 
-没有开始 RRT*、障碍物、perception、正式 ROS 2 interface、DDS、ArduPilot、团队 workspace 集成或下一阶段。下一步应先由用户决定是否为 Phase 3 成功结果创建新的本地 Git checkpoint；不得自动提交或 push。
+没有开始 RRT*、障碍物、perception、正式 ROS 2 interface、DDS、ArduPilot、团队 workspace 集成或下一阶段。下一步应先由用户审阅连续结果，并决定是否创建新的本地 Git checkpoint；不得自动提交或 push。

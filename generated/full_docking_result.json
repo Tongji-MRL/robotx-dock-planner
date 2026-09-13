@@ -1,0 +1,145 @@
+{
+  "validation": "continuous_start_to_docked",
+  "validation_date": "2026-09-13",
+  "world": "scan_dock_deliver_task",
+  "official_original_world": true,
+  "world_lifecycle_modified": false,
+  "official_running_window_s": 300.0,
+  "bay_index": 2,
+  "controller": "scripts/gz_full_docking.cc",
+  "state_machine": [
+    "GO_TO_APPROACH",
+    "ALIGN",
+    "GO_TO_ENTRANCE",
+    "GO_TO_STOP",
+    "DONE",
+    "FAILED"
+  ],
+  "target_generated_by": [
+    "vrx_dock_2022_bay_to_dockspec",
+    "DockPlanner.plan"
+  ],
+  "approach_pose": {
+    "x": -494.597168840,
+    "y": 183.923597950,
+    "yaw": 1.0
+  },
+  "entrance_pose": {
+    "x": -488.113541169,
+    "y": 194.021249768,
+    "yaw": 1.0
+  },
+  "stop_pose": {
+    "x": -487.032936557,
+    "y": 195.704191738,
+    "yaw": 1.0
+  },
+  "official_window_baseline": {
+    "approach_base_thrust_n": 30.0,
+    "task_elapsed_at_controller_start_s": 26.0,
+    "result": "FAILED",
+    "failure_reason": "official_running_timeout",
+    "controller_runtime_s": 274.900800842,
+    "task_elapsed_at_end_s": 300.0,
+    "stage_durations_s": {
+      "GO_TO_APPROACH": 138.500061399,
+      "ALIGN": 31.899996966,
+      "GO_TO_ENTRANCE": 90.550001364,
+      "GO_TO_STOP_before_timeout": 13.450001608
+    },
+    "identified_bottleneck": "GO_TO_APPROACH",
+    "collision": false,
+    "corridor_exceeded": false,
+    "back_wall_risk": false,
+    "zero_published": true
+  },
+  "minimal_speed_optimization": {
+    "parameter": "approach_base_thrust_n",
+    "before": 30.0,
+    "after": 45.0,
+    "other_phase_logic_or_parameters_changed": false,
+    "dock_geometry_changed": false,
+    "world_time_limit_changed": false
+  },
+  "successful_run": {
+    "initial_pose": {
+      "x": -532.066435127,
+      "y": 161.990703582,
+      "yaw": 0.999920264
+    },
+    "task_elapsed_at_controller_start_s": 10.0,
+    "task_elapsed_at_done_s": 284.0,
+    "controller_runtime_s": 273.451075171,
+    "completed_within_official_300s_window": true,
+    "official_window_margin_at_done_s": 16.0,
+    "docked_observed": true,
+    "docked_observation": "bay_2 internal contain remained true for at least 10 seconds",
+    "stop_reached": true,
+    "final_state": "DONE",
+    "stage_transitions": [
+      {
+        "from": "GO_TO_APPROACH",
+        "to": "ALIGN",
+        "duration_s": 103.250062973,
+        "pose": {
+          "x": -495.966590550,
+          "y": 183.324986943,
+          "yaw": 0.421056100
+        }
+      },
+      {
+        "from": "ALIGN",
+        "to": "GO_TO_ENTRANCE",
+        "duration_s": 33.149999221,
+        "pose": {
+          "x": -495.701861177,
+          "y": 183.477048598,
+          "yaw": 0.921261729
+        }
+      },
+      {
+        "from": "GO_TO_ENTRANCE",
+        "to": "GO_TO_STOP",
+        "duration_s": 89.949998255,
+        "pose": {
+          "x": -488.581526162,
+          "y": 193.253402928,
+          "yaw": 1.011877089
+        }
+      },
+      {
+        "from": "GO_TO_STOP",
+        "to": "DONE",
+        "duration_s": 46.600003966,
+        "pose": {
+          "x": -487.274690560,
+          "y": 195.401544757,
+          "yaw": 0.998015416
+        }
+      }
+    ],
+    "final_pose_after_zero": {
+      "x": -487.274663223,
+      "y": 195.412616071,
+      "yaw": 0.997995111
+    },
+    "final_stop_distance_m": 0.378745495,
+    "final_heading_error_rad": 0.002004889,
+    "final_heading_error_deg": 0.114872,
+    "final_lateral_error_m": 0.045866971,
+    "final_back_wall_clearance_m": 1.675957938,
+    "minimum_back_wall_clearance_m": 1.675957938,
+    "maximum_absolute_thruster_command_n": 50.0,
+    "collision": false,
+    "collision_pair": "",
+    "corridor_exceeded": false,
+    "pose_stale": false,
+    "timed_out": false,
+    "publish_failed": false,
+    "back_wall_risk": false,
+    "stop_overshot": false,
+    "zero_published": true,
+    "world_stopped_after_result": true,
+    "known_teardown_issue_observed": "WaveVisual segmentation fault after controller success and thrust zero"
+  }
+}

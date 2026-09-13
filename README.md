@@ -253,3 +253,30 @@ WAM-V、release 和其余语义保持不变，测试会做 XML 语义比对。
 后墙净空 1.673 m，最大绝对推力 6.091 N；无 collision、走廊越界、stop overshoot、
 后墙风险、超时或振荡，推力成功归零。VRX 日志确认 internal activation 并持续在泊位
 10 s 后进入 `<docked>`。完整摘要见 `generated/phase3_result.json`。
+
+### 完整连续流程：start 到 docked
+
+`gz_full_docking` 是独立的连续验证控制器，不修改已经验证过的四个分段控制器。
+它显式实现 `GO_TO_APPROACH -> ALIGN -> GO_TO_ENTRANCE -> GO_TO_STOP -> DONE`
+状态机，并保留 `FAILED` 终态。只有当前阶段满足原成功条件后才切换；collision、
+corridor exceeded、pose stale、阶段或官方任务 timeout、publish failure、stop overshoot
+和 back-wall risk 均会立即进入 `FAILED`，随后重复发布双侧零推力。
+
+```bash
+python3 -B -m examples.phase1_target
+bash scripts/build_gz_full_docking.sh
+./generated/gz_full_docking generated/phase1_target.json
+```
+
+控制目标仍全部读取 adapter + DockPlanner 生成的 `phase1_target.json`。连续控制器复用
+Phase 1/1.5/2/3 参数；官方 300 s 基线中 `GO_TO_APPROACH` 用时 138.500 s，是明确
+瓶颈，完整流程在 STOP 阶段被官方时限终止。随后只把连续控制器的 approach 基础推力
+从 30 N 提至 45 N；其余阶段逻辑和参数、DockPlanner 几何及 world 时限均未改。
+
+2026-09-13 在未经修改的官方原始 `scan_dock_deliver_task` 上实测成功。控制器从官方
+elapsed=10 s 开始，在 elapsed=284 s 进入 `DONE`，控制器总运行 273.451 s，距 300 s
+截止尚有 16 s。阶段耗时依次为 103.250、33.150、89.950、46.600 s。最终距 stop
+0.379 m，heading error 0.115°，横向误差 0.046 m，最小后墙净空 1.676 m；无
+collision、corridor 越界、pose stale、timeout、publish failure、stop overshoot 或
+back-wall risk。bay_2 internal contain 连续保持至少 10 s，`docked` 被观察到，双侧
+推力成功归零。完整基线、优化和成功结果见 `generated/full_docking_result.json`。
