@@ -54,6 +54,50 @@ result = planner.plan(
 - `examples/__init__.py`：使示例可通过模块方式运行。
 - `tests/test_planner.py`：平移、旋转、起点变化、非法输入及预留接口测试。
 
+## Task 3 感知输入与集成接口
+
+`dock_planner/integration.py` 定义独立于 ROS 2、Gazebo、UAV 通信和全局规划实现的
+输入契约。NED 点使用 `north/east/down`，单位米；平面 `x_ned=north`、
+`y_ned=east`。`heading_rad` 从北朝东为正，指向泊位内部；数值上与 core 在
+`x=north, y=east` 下使用的 `yaw` 一致。接入方必须统一 NED 原点和时间戳时钟，
+并把传感器原生坐标和航向转换到这里。当前不做数据新鲜度判断。
+
+```text
+UAV 一次性粗 dock (ID、中心、约四角、时间、valid) ──┐
+USV 未来精确入口 (中心、朝内 heading、时间、valid) ──┼─> integration ─> DockSpec ─> DockPlanner
+另行确认的 bay 净宽/净深 ────────────────────────────┘                             └─> approach / entrance / stop
+UAV obstacle 中心点 ─────────────────────────────────────> integration ─> GlobalApproachPlanner 接口
+                                                                    （尚无实现）
+```
+
+- `CoarseDockInfo` 的四个 `approximate_corners_ned` 只校验数量、点类型、
+  有限坐标及彼此不同；不假设角点顺序、矩形、物理边界或入口位置。`valid=False`
+  表示观测不可用于转换。
+- `PreciseEntrancePoseNED` 预留未来 USV 近距感知结果，包括有效性、时间戳、
+  可选置信度和可选 dock ID。当前没有实际感知实现，也没有 GREEN bay 选择逻辑。
+- `ObstaclePointNED` 仅有 `center_ned`，没有尺寸或半径。
+  `GlobalApproachPlanner` 是协议接口：输入当前 pose、approach goal、障碍物点，
+  可选 planner 侧 `safety_radius` 与 NED 边界点序列；输出 waypoint path 或失败原因。
+  这里不实现避障、膨胀、A* 或 RRT*。
+- `prepare_terminal_plan_input()` 仅在粗观测和精确入口均有效时，将精确入口与
+  **另行提供的泊位净宽/净深**转换成现有 `DockSpec`。可选入口 dock ID 若存在，
+  必须匹配粗 dock ID；若入口没有 ID，调用方必须确认关联关系。粗中心和角点
+  不参与入口 pose 推算。函数保留 obstacle points；将非空点传入现有 core 时，
+  core 仍返回 `UNSUPPORTED_INPUT`，不会报告避障成功。
+- core 的 `SUCCESS` 仍仅表示 terminal docking 语义目标几何生成成功。
+  global approach path 与 terminal docking 的衔接、泊位尺寸来源、感知有效期和
+  安全半径均待外部接口确认。
+
+最小调用方式：
+
+```python
+request = prepare_terminal_plan_input(coarse, precise_entrance, bay_width, bay_depth, obstacle_points)
+result = planner.plan(current_pose_ned, request.dock, obstacles=request.obstacles)
+```
+
+`current_pose_ned` 是 `Pose2D(north, east, heading_rad)`。已有 VRX adapter
+继续使用原接口与世界坐标，不依赖新数据结构。
+
 ## VRX 几何适配/测试层
 
 `dock_planner/vrx_reference.py` 单独提供
