@@ -94,6 +94,43 @@ class ObstaclePointNED:
 
 
 @dataclass(frozen=True)
+class GenericVelocityCommand:
+    """Controller output independent of ROS, Gazebo, or a vehicle backend.
+
+    ``timestamp`` and ``valid_until`` use the clock domain selected by the
+    caller.  ``frame_id`` records the intended body frame for the internal
+    contract; a bare ROS ``Twist`` does not carry it and the ROS adapter does
+    not claim to publish it.
+    """
+
+    surge_mps: float
+    yaw_rate_rps: float
+    timestamp: float
+    valid_until: float
+    phase: str
+    source: str
+    frame_id: str = "base_link"
+
+    def __post_init__(self) -> None:
+        if not all(_finite(v) for v in (
+            self.surge_mps, self.yaw_rate_rps, self.timestamp, self.valid_until,
+        )):
+            raise ValueError("velocity values and timestamps must be finite real numbers")
+        if self.valid_until < self.timestamp:
+            raise ValueError("valid_until must be greater than or equal to timestamp")
+        for name, value in (("phase", self.phase), ("source", self.source), ("frame_id", self.frame_id)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a nonempty string")
+
+    def is_valid_at(self, now: float) -> bool:
+        """Return whether ``now`` falls within this command's validity window."""
+
+        if not _finite(now):
+            raise ValueError("now must be a finite real number")
+        return self.timestamp <= now <= self.valid_until
+
+
+@dataclass(frozen=True)
 class TerminalPlanInput:
     dock: DockSpec
     obstacles: Tuple[ObstaclePointNED, ...]
