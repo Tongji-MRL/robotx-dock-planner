@@ -88,6 +88,24 @@ UAV obstacle 中心点 ───────────────────
   global approach path 与 terminal docking 的衔接、泊位尺寸来源、感知有效期和
   安全半径均待外部接口确认。
 
+### 速度控制接口
+
+`GenericVelocityCommand` 是控制逻辑与具体执行后端之间的内部速度契约，包含
+`surge_mps`（前向速度，m/s）、`yaw_rate_rps`（偏航角速度，rad/s）、
+`timestamp`、`valid_until`、`phase`、`source` 和 `frame_id`。时间戳使用调用方
+选定的时钟域；命令只有在有效时间窗口内才可发布。
+
+`RosTwistAdapter` 将该契约转换为 `geometry_msgs/msg/Twist`：
+
+- 默认 topic：`/usv/control/cmd_vel`
+- `linear.x = surge_mps`
+- `angular.z = yaw_rate_rps`
+- 其它线速度和角速度分量置零
+
+适配器只负责消息转换和发布，不连接或假设真实 ArduPilot；10 Hz 是上层控制契约的
+默认发布频率，具体定时器由 ROS 节点负责。当前 `gz_full_docking.cc` 仍使用既有
+左右推力控制，不通过该适配器。
+
 最小调用方式：
 
 ```python
