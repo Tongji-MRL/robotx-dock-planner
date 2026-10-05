@@ -2,7 +2,7 @@ import math
 import unittest
 
 from dock_planner import (
-    CoarseDockInfo, DockPlanner, NEDPoint, ObstaclePointNED, PlannerConfig,
+    CoarseDockCenterObservationNED, CoarseDockInfo, DockPlanner, NEDPoint, ObstaclePointNED, PlannerConfig,
     PlanStatus, Pose2D, PreciseEntrancePoseNED, prepare_terminal_plan_input,
 )
 
@@ -73,6 +73,18 @@ class IntegrationTests(unittest.TestCase):
         dock = request.dock
         self.assertEqual((dock.entrance_center_x, dock.entrance_center_y), (9, 20))
         self.assertEqual(dock.entrance_heading, math.pi / 2)
+
+    def test_terminal_input_accepts_center_only_coarse_context(self):
+        center_only = CoarseDockCenterObservationNED(
+            "dock_1", self.coarse.center_ned, 12.5, True,
+        )
+        request = prepare_terminal_plan_input(center_only, self.entrance, 3, 5)
+        self.assertEqual(request.dock.dock_id, "dock_1")
+        self.assertEqual(
+            (request.dock.entrance_center_x, request.dock.entrance_center_y),
+            (9, 20),
+        )
+        dock = request.dock
         self.assertEqual((dock.bay_width, dock.bay_depth, dock.confidence, dock.dock_id),
                          (3, 5, 0.9, "dock_1"))
         self.assertEqual(request.obstacles, ())

@@ -49,10 +49,67 @@ result = planner.plan(
 
 - `dock_planner/types.py`：输入、输出 dataclass 和状态枚举。
 - `dock_planner/planner.py`：输入校验、几何计算和单目标 API。
+- `dock_planner/integration.py`：Task 3 感知、终端入口和通用速度的集成契约。
+- `dock_planner/dock_search.py`：中心点粗定位到安全圆边缘与有限圆弧目标的纯几何层。
+- `dock_planner/ros_twist_adapter.py`：通用速度命令到 ROS `Twist` 的消息适配。
+- `dock_planner/task3_flow.py`：不依赖 ROS 的搜索、颜色判定和终端规划流程骨架。
+- `dock_planner/dock_perception.py`：离线 NumPy 感知原型和 synthetic mock；当前不接 ROS。
 - `dock_planner/__init__.py`：公开导入接口。
 - `examples/basic.py`：打印一组示例输入和结果。
 - `examples/__init__.py`：使示例可通过模块方式运行。
 - `tests/test_planner.py`：平移、旋转、起点变化、非法输入及预留接口测试。
+
+## Task 3 已确定的实际执行流程
+
+以下流程是 Task 3 后续真实接入的固定流程，仿真 thrust 控制器只是独立的验证路径：
+
+1. **UAV 粗定位**：UAV 至少提供 dock ID、转换到 USV NED 后的粗中心、timestamp
+   和 valid；如果以后能提供四个大致角点，则使用 `CoarseDockInfo` 保存。角点只是
+   粗几何，不能作为精确边界，也不能直接推导入口。
+2. **Approach Dock**：中心点方案根据已知 dock 外形尺寸、停船距离和定位误差计算
+   搜索半径，先生成靠近当前 USV 一侧的圆周 staging 目标。
+3. **Dock Local Search**：USV 使用 Mid-360 LiDAR 发现 dock 结构、dock 方向和入口候选。
+   LiDAR 不负责颜色识别。
+4. **Bay Inspection**：USV 在一个入口附近调整姿态，使相机朝向入口后方墙面，然后把
+   camera image 交给颜色识别模型。
+5. **Bay Decision**：颜色符合目标时选择该入口；否则退出当前入口，沿 dock 方向继续
+   搜索下一个入口，重复局部定位、姿态调整和颜色识别。
+6. **Terminal Docking**：选定入口后生成 `PreciseEntrancePoseNED`，交给 DockPlanner
+   生成 align、entrance、stop 等终端目标。
+7. **速度输出**：上层控制逻辑将终端控制结果表示为 `GenericVelocityCommand`，再由
+   `RosTwistAdapter` 转为 `/usv/control/cmd_vel` 的 `Twist`。
+
+当前仓库提供数据边界、流程状态机、中心点 approach/有限圆弧目标生成，以及只用于
+离线 synthetic 测试的 NumPy dock 感知原型。它不包含生产可用的 Mid-360/PointCloud2
+接入、颜色模型、真实 USV 运动控制或 ArduPilot 连接。`gz_full_docking.cc` 继续使用
+已有左右 thrust 控制，不属于上述真实 USV 速度输出链路。
+
+点云处理的边界是 `DockPerception`：未来 ROS adapter 将 `sensor_msgs/msg/PointCloud2`
+交给外部感知实现，再返回带时间戳的 `DockPerceptionResult`；`Task3FlowManager` 只消费
+结果，不解析点云。颜色处理同理通过 `ColorDetector` 消费视觉模型输出。
+
+```text
+UAV coarse center in USV NED
+        |
+        v
+safe-circle staging goal
+        |
+        v
+bounded circular-arc goals + Mid-360 entrance search
+        |
+        v
+camera pose adjustment -> color detection -> bay decision
+        |                         |
+        | target color            | other color
+        v                         v
+PreciseEntrancePoseNED       exit and next bay search
+        |
+        v
+DockPlanner -> align / entrance / stop
+        |
+        v
+GenericVelocityCommand -> RosTwistAdapter -> /usv/control/cmd_vel
+```
 
 ## Task 3 感知输入与集成接口
 
@@ -60,21 +117,46 @@ result = planner.plan(
 输入契约。NED 点使用 `north/east/down`，单位米；平面 `x_ned=north`、
 `y_ned=east`。`heading_rad` 从北朝东为正，指向泊位内部；数值上与 core 在
 `x=north, y=east` 下使用的 `yaw` 一致。接入方必须统一 NED 原点和时间戳时钟，
-并把传感器原生坐标和航向转换到这里。当前不做数据新鲜度判断。
+并把传感器原生坐标和航向转换到这里。`DataFreshnessConfig` 负责纯逻辑层的
+粗定位和近距离感知超时判断。
 
 ```text
-UAV 一次性粗 dock (ID、中心、约四角、时间、valid) ──┐
-USV 未来精确入口 (中心、朝内 heading、时间、valid) ──┼─> integration ─> DockSpec ─> DockPlanner
-另行确认的 bay 净宽/净深 ────────────────────────────┘                             └─> approach / entrance / stop
-UAV obstacle 中心点 ─────────────────────────────────────> integration ─> GlobalApproachPlanner 接口
-                                                                    （尚无实现）
+CoarseDockInfo -> USV approach -> Mid-360 dock perception -> entrance candidates
+                                                        |
+                                                        v
+camera image -> color detection -> selected bay -> PreciseEntrancePoseNED
+                                                        |
+                                                        v
+                                         DockSpec -> DockPlanner -> terminal targets
+                                                        |
+                                                        v
+                                         GenericVelocityCommand -> ROS Twist adapter
 ```
 
 - `CoarseDockInfo` 的四个 `approximate_corners_ned` 只校验数量、点类型、
   有限坐标及彼此不同；不假设角点顺序、矩形、物理边界或入口位置。`valid=False`
   表示观测不可用于转换。
-- `PreciseEntrancePoseNED` 预留未来 USV 近距感知结果，包括有效性、时间戳、
-  可选置信度和可选 dock ID。当前没有实际感知实现，也没有 GREEN bay 选择逻辑。
+- `CoarseDockCenterObservationNED` 是中心点方案的独立粗定位输入，适合在 UAV
+  暂时只提供一个 NED 中心点时做 approach/search mock；它不会被当作四个角点或精确入口。
+  `CoarseDockSearchConfig` 用已知 dock 外接尺寸、停船距离和定位误差计算搜索半径，
+  默认值可由现场标定覆盖。`coarse_dock_staging_pose()` 根据当前 USV 位置把中心点
+  转换成搜索圈上的临时 staging 点；它不生成入口 pose，也不替代 Mid-360 局部感知。
+- `CircularDockSearchConfig` 和 `plan_circular_dock_search()` 从 staging 点开始生成
+  一段可配置方向、弧长和点间距的圆弧目标。默认只搜索半圆。这里生成的是目标点，
+  不会驱动船运动，也不保证整圈无障碍；真实任务必须由 executor/控制器逐点执行，
+  并由任务层确认所选圆弧处于可航水域。
+- `DockEntranceObservationNED` 表示 Mid-360/USV 近距离感知给出的入口中心、朝内 heading、
+  confidence、timestamp 和 source；`entrance_observation_to_precise_pose()` 只接受这个
+  观测类型，并将有效观测转换为 `PreciseEntrancePoseNED`。
+- `DockPerceptionResult` 表示一次 dock 感知更新：`dock_id`、入口候选
+  `entrance_observations`、`timestamp`、`source`、`valid` 和可选 `valid_until`。
+  `DataFreshnessConfig` 当前默认粗定位超时 30 s、近距离感知超时 2 s；过期结果不会进入
+  终端规划。
+- `BayColorObservation` 表示感知组颜色模型的输出。项目只消费 color、confidence、
+  timestamp 和 source，不实现或绑定具体颜色识别模型。
+- `PreciseEntrancePoseNED` 表示 USV 完成 Mid-360 局部搜索、入口姿态调整和颜色判定后
+  选中的最终入口，包括有效性、时间戳、可选置信度和可选 dock ID。当前仓库只保留
+  这个结果接口，不实现上游感知和 bay 选择。
 - `ObstaclePointNED` 仅有 `center_ned`，没有尺寸或半径。
   `GlobalApproachPlanner` 是协议接口：输入当前 pose、approach goal、障碍物点，
   可选 planner 侧 `safety_radius` 与 NED 边界点序列；输出 waypoint path 或失败原因。
@@ -84,9 +166,9 @@ UAV obstacle 中心点 ───────────────────
   必须匹配粗 dock ID；若入口没有 ID，调用方必须确认关联关系。粗中心和角点
   不参与入口 pose 推算。函数保留 obstacle points；将非空点传入现有 core 时，
   core 仍返回 `UNSUPPORTED_INPUT`，不会报告避障成功。
-- core 的 `SUCCESS` 仍仅表示 terminal docking 语义目标几何生成成功。
-  global approach path 与 terminal docking 的衔接、泊位尺寸来源、感知有效期和
-  安全半径均待外部接口确认。
+- core 的 `SUCCESS` 仍仅表示 terminal docking 语义目标几何生成成功。Approach、
+  局部搜索、颜色决策和 terminal control 由外层流程协调；DockPlanner 不承担这些感知
+  或控制职责。泊位净宽/净深、感知有效期和安全半径仍由外部接口提供。
 
 ### 速度控制接口
 
@@ -115,6 +197,16 @@ result = planner.plan(current_pose_ned, request.dock, obstacles=request.obstacle
 
 `current_pose_ned` 是 `Pose2D(north, east, heading_rad)`。已有 VRX adapter
 继续使用原接口与世界坐标，不依赖新数据结构。
+
+纯 Python 整链演示（无 ROS、无真实控制、无硬件）：
+
+```bash
+python3 -m examples.task3_full_dry_run
+```
+
+该演示覆盖粗中心、staging、圆弧搜索、synthetic 点云入口候选、非目标颜色继续搜索、
+目标颜色选择、terminal plan、DOCKED、WATERING 和 FINISHED。到达目标点的事件由脚本
+模拟，因此不能当作实船运动验证或真实 Mid-360 验证。
 
 ## VRX 几何适配/测试层
 

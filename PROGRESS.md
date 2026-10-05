@@ -1,8 +1,26 @@
 # DockPlanner V0 工作进度与续接说明
 
-更新时间：2026-09-13（Asia/Shanghai）
+更新时间：2026-10-05（Asia/Shanghai）
 
-本文档用于在新的 Codex thread 中无损继续 RobotX 2026 Task 3 靠泊规划工作。当前已完成 Phase 1 / 1.5 / 2 / 3 分段验证，并完成官方原始 300 s lifecycle 内的 `start -> approach -> ALIGN -> entrance -> stop -> docked` 连续动态验证；尚未开始任何后续阶段，读取本文档后不应自动运行 Gazebo 或发送推力。
+本文档用于在新的 Codex thread 中无损继续 RobotX 2026 Task 3 靠泊规划工作。当前已完成 Phase 1 / 1.5 / 2 / 3 分段验证，并完成官方原始 300 s lifecycle 内的 `start -> approach -> ALIGN -> entrance -> stop -> docked` 连续动态验证；读取本文档后不应自动运行 Gazebo 或发送推力。
+
+Task 3 后续真实执行流程已经确定为：
+
+```text
+UAV 粗中心（转换到 USV NED）
+  -> USV 到安全圆近侧 staging 点
+  -> 沿有限圆弧逐点搜索，同时由 Mid-360 LiDAR 做 dock local search
+  -> 入口姿态调整
+  -> camera image 颜色识别
+  -> 目标 bay 选择；否则退出并沿 dock 方向扫描下一个入口
+  -> PreciseEntrancePoseNED
+  -> DockPlanner terminal docking
+  -> GenericVelocityCommand
+  -> ROS Twist /usv/control/cmd_vel
+```
+
+Mid-360 点云处理、dock detection 和颜色模型仍由后续真实模块提供；本仓库只维护它们
+与 planner 之间的接口边界。LiDAR 负责 dock 结构、方向和入口候选，不负责颜色识别。
 
 ## 1. 项目目标与工作区边界
 
@@ -21,14 +39,14 @@ USV pose -> approach pose -> entrance pose -> stop pose
 - 团队正式工作区：`/home/y/robotx_team_ws/robotx_workspace`，当前实验阶段不得修改
 - 团队仿真仓库位于正式工作区的 `src/robotx_sim`，当前没有向其中同步代码
 
-当前 `dock_planner_v0` 是独立 Git 仓库，分支为 `main`。Phase 3 成功后的最新 checkpoint 为：
+当前 `dock_planner_v0` 是独立 Git 仓库，分支为 `main`。本次工作基于：
 
 ```text
-9db1755953c0b9d242e01c04f0bb94d1d436e448
-Complete Phase 3 entrance-to-stop docking validation
+9050efb Document real USV integration interface
 ```
 
-远程 `origin` 为 `https://github.com/Tongji-MRL/robotx-dock-planner.git`，该 checkpoint 已在 `origin/main`。连续流程控制器、测试、文档及结果是 checkpoint 之后的新改动，当前尚未提交或 push，也没有修改团队正式工作区。
+远程 `origin` 为 `https://github.com/Tongji-MRL/robotx-dock-planner.git`。没有修改团队
+正式工作区。
 
 ## 2. 当前环境与仿真入口
 
@@ -113,9 +131,41 @@ stop     = entrance_center + stop_distance_inside * u
 [输入 USV pose, approach pose, entrance pose, stop pose]
 ```
 
-`obstacles=None` 或空列表可以传入；非空 obstacles 返回 `UNSUPPORTED_INPUT`。V0.1 没有 RRT*、动力学模型、正式 ROS 2 接口或控制器依赖。
+`obstacles=None` 或空列表可以传入；非空 obstacles 返回 `UNSUPPORTED_INPUT`。V0.1 没有 RRT*、动力学模型或 planner core 的 ROS 2 依赖；ROS `Twist` 只在独立 adapter 层提供。
 
-### 3.3 VRX dock_2022_base adapter
+### 3.3 Task 3 感知与控制边界
+
+`CoarseDockInfo` 保存中心和四个粗角点；当前上游只给中心时使用独立的
+`CoarseDockCenterObservationNED`。两者都不提供入口 pose。中心点方案通过
+`CoarseDockSearchConfig` 计算安全搜索半径，再由 `dock_search.py` 生成近侧 staging
+目标和有限圆弧目标。圆弧只是几何目标序列，不会自行控制 USV，也不保证路径无障碍。
+USV 侧的 Mid-360 感知负责输出 dock 方向和入口候选，颜色模型负责对相机图像给出 bay
+颜色，外层搜索流程负责协调候选遍历和 bay 选择。
+
+当前预留的数据接口为 `DockEntranceObservationNED`、`BayColorObservation`，以及
+`entrance_observation_to_precise_pose()`；它们只描述真实感知结果和到终端 pose 的转换，
+不包含点云处理或颜色模型实现。
+
+`DockPerception` 和 `ColorDetector` 是外部实现的协议边界；`DockPerception` 输出带时间戳
+的 `DockPerceptionResult`，`Task3FlowManager` 用注入的结果把 APPROACH_DOCK、SEARCH_DOCK、
+CHECK_BAY_COLOR、NEXT_BAY、TERMINAL_DOCKING、DOCKED、WATERING、FINISHED/ERROR 流程跑通；
+非目标 bay 显式经过 NEXT_BAY。`DataFreshnessConfig` 当前默认粗定位超时 30 s、近距离
+感知超时 2 s。PointCloud2 只应在 ROS 感知 adapter 层解析，不进入 DockPlanner 或流程
+管理器。
+
+`PreciseEntrancePoseNED` 只在选定目标 bay 后进入 terminal docking 流程。它是现有
+`prepare_terminal_plan_input()` 到 `DockSpec` 的输入，不表示粗定位或 LiDAR 原始输出。
+
+`GenericVelocityCommand` 是终端控制逻辑与执行后端之间的内部契约；
+`RosTwistAdapter` 只负责映射到 `/usv/control/cmd_vel`。当前没有保证该 topic 已连接
+真实 ArduPilot，`gz_full_docking.cc` 仍是独立 thrust 仿真验证工具。
+
+`examples/task3_full_dry_run.py` 已用 mock 中心点、模拟到达事件和 synthetic 点云把
+`APPROACH_DOCK -> SEARCH_DOCK -> CHECK_BAY_COLOR -> NEXT_BAY -> SEARCH_DOCK ->
+TERMINAL_DOCKING -> DOCKED -> WATERING -> FINISHED` 跑通。该结果验证纯逻辑和接口，
+不代表真实 PointCloud2、船体控制、避障或 PX4 已接通。
+
+### 3.4 VRX dock_2022_base adapter
 
 适配器在 `dock_planner/vrx_reference.py`：
 
@@ -146,7 +196,7 @@ entrance_heading_world = wrap(dock_yaw + local_inward_heading)
 
 代码用 `VRX_REFERENCE_GEOMETRY` 标识这组几何。**4 m × 6 m 只是本地 VRX 模型的参考尺寸，不是 RobotX 2026 官方尺寸，不能固化为未来正式 Task 3 模型。**
 
-### 3.4 当前 bay_2 目标
+### 3.5 当前 bay_2 目标
 
 动态验证统一使用：
 
@@ -174,12 +224,18 @@ adapter 和 planner 自动计算：
 - `dock_planner/__init__.py`：导出公共 API。
 - `dock_planner/types.py`：核心数据结构和状态枚举。
 - `dock_planner/planner.py`：V0.1 纯几何规划核心。
+- `dock_planner/integration.py`：NED 感知结果、终端入口和通用速度契约。
+- `dock_planner/dock_search.py`：中心点到安全圆 staging 和有限圆弧目标的纯几何规划。
+- `dock_planner/task3_flow.py`：Task 3 搜索、颜色决策、终端规划和任务状态流转。
+- `dock_planner/dock_perception.py`：仅供离线测试的 NumPy/synthetic 感知原型。
+- `dock_planner/ros_twist_adapter.py`：通用速度到 ROS `Twist` 的适配器。
 - `dock_planner/vrx_reference.py`：VRX `dock_2022_base` 三 bay 几何适配。
 - `dock_planner/wamv_collision.py`：读取真实 VRX WAM-V URDF collision primitive，用于静态 footprint/净空检查；未进入 planner 核心。
 
 ### `examples/`
 
 - `examples/basic.py`：最小 DockPlanner API 示例。
+- `examples/task3_full_dry_run.py`：无 ROS/硬件的中心点到 FINISHED 整链 dry run。
 - `examples/vrx_reference.py`：VRX 三 bay 的 DockSpec 和规划结果示例。
 - `examples/gazebo_static.py`：调用 adapter/planner 生成最小静态 Gazebo world、markers、heading 线和 JSON。
 - `examples/phase1_target.py`：为动态控制自动生成 bay_2 目标 JSON，显式包含 DockSpec、approach、entrance、stop 和生成链信息。
@@ -644,18 +700,22 @@ back_wall_risk=false, docked_observed=true, zero_published=true
 segmentation fault 发生在控制器 DONE 和双推力归零之后，不影响上述结果。
 
 完整结构化记录保存在 `generated/full_docking_result.json`。没有接入 RRT*、障碍物、
-perception、正式 ROS 2 interface、DDS、ArduPilot 或团队 workspace。
+Mid-360 点云算法、dock detection、颜色模型、DDS 或真实 ArduPilot。通用速度契约和
+ROS `Twist` adapter 已存在，但不代表真实控制链路已连接。
 
 ## 13. 测试基线
 
-当前静态单元测试基线是 **27/27 通过**：
+当前静态单元测试基线是 **83/83 通过**：
 
 ```bash
 cd /home/y/robotx_ws/dock_planner_v0
 python3 -B -m unittest discover -s tests -v
 ```
 
-测试覆盖 planner 几何、VRX adapter、静态 Gazebo world/markers、真实 WAM-V collision footprint，以及动态目标自动生成。它们不启动 Gazebo，不验证真实动力学。
+测试覆盖 planner 几何、VRX adapter、静态 Gazebo world/markers、真实 WAM-V collision
+footprint、动态目标自动生成、感知数据契约、freshness、Task 3 状态流转、中心点 staging、
+有限圆弧和 synthetic dock perception。它们不启动 Gazebo，不验证真实动力学、真实
+Mid-360、PointCloud2、ROS executor、避障或 PX4。
 
 实验控制工具的构建命令：
 
@@ -672,9 +732,9 @@ bash scripts/build_gz_full_docking.sh
 
 1. **WaveVisual teardown segmentation fault**：Ctrl-C 停止 world 后偶尔发生。它出现在控制器退出、推力归零之后，目前没有证据表明影响 Phase 结果。
 2. **RobotX 2026 官方 dock 尺寸未确认**：当前 4 m × 6 m 和三 bay 坐标仅为 `VRX_REFERENCE_GEOMETRY`。
-3. **正式团队 ROS 2 interface 未接入**：尚未接团队 workspace、ROS 2 topic/action、DDS 或 ArduPilot。
+3. **真实控制链路未接入**：已有 `/usv/control/cmd_vel` 的 Twist adapter，但尚未确认真实 ROS 订阅端、DDS 和 ArduPilot 连接。
 4. **obstacle / RRT* 未接入**：obstacles 只是 optional 预留，非空输入尚不支持。
-5. **perception 未接入**：尚未接 dock pose、confidence、TF、严格 entrance pose 或 UAV 感知。
+5. **perception 未接入**：Task 3 流程已确定，但 Mid-360 点云、dock detection、入口候选和颜色模型仍待真实模块接入。
 6. **Phase 2 接受半径较宽**：最终 reference point 距入口中心约 `0.864 m`；Phase 3 已验证入口门控和对该初始误差的处理，但未来控制器仍不能假定船恰好在入口中心。
 7. **正式时限余量较小**：一次官方原始 world 实测在 elapsed=284 s 完成，余量 16 s。已证明当前条件下可在 300 s 内完成，但还不是多次统计或比赛鲁棒性保证。
 8. **控制代码尚未抽象**：Phase 1/1.5/2/3 和连续验证的 standalone C++ 有重复逻辑。按阶段要求暂不重构，先保留可复现实验。
@@ -694,4 +754,5 @@ DockPlanner V0.1 geometry
   + official 300 s continuous start -> docked
 ```
 
-没有开始 RRT*、障碍物、perception、正式 ROS 2 interface、DDS、ArduPilot、团队 workspace 集成或下一阶段。下一步应先由用户审阅连续结果，并决定是否创建新的本地 Git checkpoint；不得自动提交或 push。
+没有开始 RRT*、障碍物、Mid-360/颜色感知实现、真实 ArduPilot 或团队 workspace 集成。
+现阶段应按已确定的 Task 3 流程接入感知接口，不改变 DockPlanner core 和 Gazebo thrust 验证路径。
