@@ -8,6 +8,7 @@
 | 优先级 | 完成 | 项目 | 当前证据 | 剩余工作 / 所需输入 |
 |---|---:|---|---|---|
 | P0 | [x] | 任务全流程确认 | 粗定位、局部搜索、bay 检查、最终靠泊、喷水和颜色序列流程已整理 | Handbook 更新时同步检查 |
+| P0 | [x] | 异常场景系统审计 | `TASK3_ABNORMAL_SCENARIOS.md` 已按任务前中后审计 158 项：45 已覆盖、35 部分覆盖、78 未覆盖 | 按矩阵优先补齐 65 个未覆盖 P0；相似项由统一 safety/watchdog/fault manager 合并解决 |
 | P0 | [x] | DockPlanner 最终靠泊几何 | approach、align、entrance、stop 基线测试通过 | 仍需通过适配器交给实船控制器执行 |
 | P0 | [x] | UAV 粗中心接口 | 已有 `CoarseDockCenterObservationNED` 和数据时效检查 | Orin ROS adapter 需要读取真实 semantic map 消息 |
 | P0 | [x] | UAV-NED 转 USV-NED 纯转换 | 已按 PDF 的 WGS84/ECEF/NED 公式实现；semantic map 可输出现有 coarse dock 中心接口；已确认两套 NED 轴共向 | 当前只需固定平移，无需 yaw 旋转 |

@@ -56,6 +56,8 @@ result = planner.plan(
 - `dock_planner/dock_perception.py`：离线 NumPy 感知原型和 synthetic mock；当前不接 ROS。
 - `dock_planner/color_sequence.py`：颜色序列通信契约；不依赖 ROS。
 - `dock_planner/__init__.py`：公开导入接口。
+- `TASK3_ABNORMAL_SCENARIOS.md`：任务前、中、后 158 项异常场景、当前覆盖状态和处置方案。
+- `TASK3_READINESS_CHECKLIST.md`：从离线逻辑到比赛级闭环的完成度清单。
 - `examples/basic.py`：打印一组示例输入和结果。
 - `examples/__init__.py`：使示例可通过模块方式运行。
 - `tests/test_planner.py`：平移、旋转、起点变化、非法输入及预留接口测试。
@@ -248,6 +250,13 @@ data:  [tin_color, circle_color]
 新鲜 `GenericVelocityCommand` 可以通过；缺命令、过期、frame 不符或超过配置限制时
 输出零速度。ROS 层必须把 goto/terminal 输出重映射到不同输入 topic，并只让 arbiter
 发布最终 `/usv/control/cmd_vel`。
+
+### 异常场景审计
+
+[`TASK3_ABNORMAL_SCENARIOS.md`](TASK3_ABNORMAL_SCENARIOS.md) 将任务前、粗定位与接近、
+LiDAR 搜索、颜色与终端靠泊、喷水、返航和系统级故障拆成 158 项。每一项明确标为
+已覆盖、部分覆盖或未覆盖，并给出默认安全动作和下一步。当前统计为 45 项已覆盖、
+35 项部分覆盖、78 项未覆盖；其中 65 项未覆盖问题属于实船自主控制前必须处理的 P0。
 
 `pointcloud_adapter.py` 按实际 Mid-360 PointCloud2 字段布局提取 x/y/z，不要求
 intensity、tag、line、timestamp 与 XYZ 使用相同 datatype。它支持有限值过滤和质量
