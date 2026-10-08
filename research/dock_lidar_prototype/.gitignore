@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.db3
+*.npy
+*.npz
+
+# Raw/expanded experiment output stays local; only curated evidence is tracked.
+artifacts/frames_*/
+artifacts/*.gif
+artifacts/unseeded_*
+artifacts/dock_bags_xy_contact.png
