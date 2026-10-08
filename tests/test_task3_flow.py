@@ -5,6 +5,7 @@ from dock_planner import (
     BayColorObservation,
     CircularDockSearchConfig,
     CoarseDockCenterObservationNED,
+    CoarseDockCirclePosition,
     CoarseDockInfo,
     CoarseDockSearchConfig,
     DockEntranceObservationNED,
@@ -155,6 +156,71 @@ class Task3FlowTests(unittest.TestCase):
         self.assertIsNone(self.manager.search_waypoint_reached())
         self.assertEqual(self.manager.state, Task3FlowState.ERROR)
         self.assertIn("arc exhausted", self.manager.error)
+
+    def test_center_search_handles_inside_on_circle_and_undefined_center(self):
+        center = CoarseDockCenterObservationNED(
+            "dock_1", NEDPoint(10.0, 20.0, 0.0), 10.0, True,
+        )
+        config = CoarseDockSearchConfig(
+            dock_length_m=2.0,
+            dock_width_m=2.0,
+            vessel_envelope_radius_m=0.0,
+            dimension_measurement_margin_m=0.0,
+            stand_off_distance_m=1.0,
+            position_uncertainty_m=0.0,
+            circle_reached_tolerance_m=0.1,
+        )
+
+        inside_manager = Task3FlowManager(
+            DockPlanner(PlannerConfig(4, 2)),
+            target_color="GREEN",
+            bay_width=3,
+            bay_depth=5,
+        )
+        inside_plan = inside_manager.begin_center_search(
+            center,
+            Pose2D(9.0, 20.0, 0.0),
+            approach_config=config,
+        )
+        self.assertIsNotNone(inside_plan)
+        self.assertEqual(
+            inside_manager.coarse_circle_position,
+            CoarseDockCirclePosition.INSIDE_MINIMUM_CLEARANCE,
+        )
+        self.assertEqual(inside_manager.state, Task3FlowState.APPROACH_DOCK)
+        self.assertLess(inside_plan.staging_pose.x, 9.0)
+
+        radius = config.search_radius_m
+        on_circle_manager = Task3FlowManager(
+            DockPlanner(PlannerConfig(4, 2)),
+            target_color="GREEN",
+            bay_width=3,
+            bay_depth=5,
+        )
+        on_circle_manager.begin_center_search(
+            center,
+            Pose2D(10.0 - radius, 20.0, 0.0),
+            approach_config=config,
+        )
+        self.assertEqual(
+            on_circle_manager.coarse_circle_position,
+            CoarseDockCirclePosition.ON_CIRCLE,
+        )
+        self.assertEqual(on_circle_manager.state, Task3FlowState.SEARCH_DOCK)
+
+        center_manager = Task3FlowManager(
+            DockPlanner(PlannerConfig(4, 2)),
+            target_color="GREEN",
+            bay_width=3,
+            bay_depth=5,
+        )
+        self.assertIsNone(center_manager.begin_center_search(
+            center,
+            Pose2D(10.0, 20.0, 0.0),
+            approach_config=config,
+        ))
+        self.assertEqual(center_manager.state, Task3FlowState.ERROR)
+        self.assertIn("escape direction", center_manager.error)
 
 
 if __name__ == "__main__":

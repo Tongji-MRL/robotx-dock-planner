@@ -11,6 +11,7 @@ from typing import Optional
 from .integration import (
     BayColorObservation,
     CoarseDockCenterObservationNED,
+    CoarseDockCirclePosition,
     CoarseDockInfo,
     CoarseDockObservation,
     CoarseDockSearchConfig,
@@ -19,6 +20,7 @@ from .integration import (
     DockPerceptionResult,
     PreciseEntrancePoseNED,
     TerminalPlanInput,
+    classify_coarse_dock_circle_position,
     entrance_observation_to_precise_pose,
     prepare_terminal_plan_input,
 )
@@ -70,6 +72,7 @@ class Task3FlowManager:
         self._state = Task3FlowState.IDLE
         self._coarse_dock: Optional[CoarseDockObservation] = None
         self._search_plan: Optional[CircularDockSearchPlan] = None
+        self._coarse_circle_position: Optional[CoarseDockCirclePosition] = None
         self._search_waypoint_index = 0
         self._entrance_observation: Optional[DockEntranceObservationNED] = None
         self._precise_entrance: Optional[PreciseEntrancePoseNED] = None
@@ -103,6 +106,10 @@ class Task3FlowManager:
         return self._search_plan
 
     @property
+    def coarse_circle_position(self) -> Optional[CoarseDockCirclePosition]:
+        return self._coarse_circle_position
+
+    @property
     def approach_goal(self) -> Optional[Pose2D]:
         return self._search_plan.staging_pose if self._search_plan is not None else None
 
@@ -129,6 +136,7 @@ class Task3FlowManager:
         self._terminal_input = None
         self._plan = None
         self._search_plan = None
+        self._coarse_circle_position = None
         self._search_waypoint_index = 0
         self._error = None
         self._state = Task3FlowState.APPROACH_DOCK
@@ -148,6 +156,16 @@ class Task3FlowManager:
         if self._state is Task3FlowState.ERROR:
             return None
         try:
+            self._coarse_circle_position = classify_coarse_dock_circle_position(
+                current_pose,
+                coarse_dock,
+                approach_config,
+            )
+            if self._coarse_circle_position is CoarseDockCirclePosition.CENTER_UNDEFINED:
+                raise ValueError(
+                    "current pose is too close to the coarse center; "
+                    "local perception must select an escape direction"
+                )
             self._search_plan = plan_circular_dock_search(
                 current_pose,
                 coarse_dock,
@@ -157,6 +175,8 @@ class Task3FlowManager:
         except (TypeError, ValueError) as exc:
             self.fail(str(exc))
             return None
+        if self._coarse_circle_position is CoarseDockCirclePosition.ON_CIRCLE:
+            self._state = Task3FlowState.SEARCH_DOCK
         return self._search_plan
 
     def approach_reached(self) -> None:

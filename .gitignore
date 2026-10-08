@@ -20,3 +20,6 @@ generated/scan_dock_deliver_phase3.sdf
 
 # Local answer snapshot maintained by Codex
 answer.txt
+
+# Superseded local handoff scratch copy; formal contract lives in dock_planner/
+research/color_sequence_staging/

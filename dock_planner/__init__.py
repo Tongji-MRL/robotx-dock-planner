@@ -2,7 +2,8 @@
 
 from .planner import DockPlanner
 from .integration import (
-    ActiveBayContext, BayColorObservation, CoarseDockCenterObservationNED, CoarseDockInfo,
+    ActiveBayContext, BayColorObservation, CoarseDockCenterObservationNED,
+    CoarseDockCirclePosition, CoarseDockInfo,
     CoarseDockObservation,
     CoarseDockSearchConfig, DockEntranceObservationNED,
     CameraEntranceCenter, DataFreshnessConfig, DockPerceptionResult,
@@ -10,10 +11,12 @@ from .integration import (
     GlobalApproachPlanner,
     GlobalApproachResult, GenericVelocityCommand,
     GlobalApproachStatus, NEDPoint, ObstaclePointNED, PreciseEntrancePoseNED,
-    TerminalPlanInput, coarse_dock_search_radius_m, coarse_dock_staging_pose,
+    ResourceColorSequenceObservation, SprayerTargetObservation, TerminalPlanInput,
+    classify_coarse_dock_circle_position, coarse_dock_search_radius_m,
+    coarse_dock_staging_pose,
     dock_vision_to_bay_color_observation,
     entrance_observation_to_precise_pose, is_timestamp_fresh,
-    parse_dock_vision_json, prepare_terminal_plan_input,
+    parse_dock_vision_json, parse_logistics_request_json, prepare_terminal_plan_input,
 )
 from .ros_twist_adapter import DEFAULT_RATE_HZ, DEFAULT_TOPIC, RosTwistAdapter, to_twist_message
 from .task3_flow import Task3FlowManager, Task3FlowState
@@ -26,14 +29,51 @@ from .dock_perception import (
     filter_point_cloud, generate_synthetic_dock_point_cloud,
 )
 from .types import DockSpec, PlannerConfig, PlanResult, PlanStatus, Pose2D
+from .watering import (
+    WateringCompletionTracker, WateringVerificationConfig,
+    WateringVerificationResult, WateringVerificationState,
+)
+from .mission_safety import (
+    AdaptiveBoundarySearchPlan, AdaptiveSearchRadiusConfig,
+    BoundaryCheckedSearchPlan, DockAttemptSupervisor, DockRetryConfig,
+    ExitAndReturnPlan, NavigableBoundaryNED, RecoveryAction, RecoveryDecision,
+    SearchBoundaryConfig, constrain_search_plan_to_boundary,
+    plan_adaptive_boundary_safe_circular_search,
+    plan_boundary_safe_circular_search, plan_exit_and_return,
+)
+from .goto_adapter import (
+    GotoReferenceSample, GotoStatus, GotoStatusKind, GotoTargetENU,
+    ned_goal_to_goto_enu, parse_goto_status,
+)
+from .control_arbiter import (
+    MotionCommandArbiter, MotionCommandArbiterConfig, MotionCommandDecision,
+    MotionCommandOwner,
+)
+from .pointcloud_adapter import (
+    PointCloud2Buffer, PointCloudXYZQuality, PointFieldSpec,
+    pointcloud2_buffer_to_xyz, pointcloud2_message_to_xyz,
+    summarize_xyz_quality,
+)
+from .ned_map_adapter import (
+    GpsOrigin, NedOffset, add_ned_offset, geodetic_to_ecef,
+    semantic_map_to_coarse_docks, transform_semantic_map,
+    uav_origin_in_usv_ned,
+)
+from .color_sequence import (
+    COLOR_SEQUENCE_MESSAGE_TYPE, COLOR_SEQUENCE_TOPIC, ColorCode,
+    ColorSequenceVector, decode_color_sequence,
+)
 
 __all__ = [
     "DockPlanner", "DockSpec", "PlannerConfig", "PlanResult", "PlanStatus", "Pose2D",
-    "NEDPoint", "CoarseDockInfo", "CoarseDockCenterObservationNED", "CoarseDockObservation",
-    "CoarseDockSearchConfig",
-    "coarse_dock_search_radius_m", "coarse_dock_staging_pose", "PreciseEntrancePoseNED",
+    "NEDPoint", "CoarseDockInfo", "CoarseDockCenterObservationNED",
+    "CoarseDockCirclePosition", "CoarseDockObservation", "CoarseDockSearchConfig",
+    "classify_coarse_dock_circle_position", "coarse_dock_search_radius_m",
+    "coarse_dock_staging_pose", "PreciseEntrancePoseNED",
     "ActiveBayContext",
     "BayColorObservation", "ObstaclePointNED", "GenericVelocityCommand",
+    "ResourceColorSequenceObservation", "parse_logistics_request_json",
+    "SprayerTargetObservation",
     "CameraEntranceCenter", "DockVisionFace", "DockVisionObservation",
     "DockVisionCoordinateConverter", "parse_dock_vision_json",
     "dock_vision_to_bay_color_observation",
@@ -47,4 +87,25 @@ __all__ = [
     "DockPerceptionConfig", "DockOpeningCandidate",
     "DockPerceptionDebugResult", "NumpyDockPerception", "OrientedBoundingBox2D", "SyntheticDockConfig",
     "filter_point_cloud", "generate_synthetic_dock_point_cloud",
+    "WateringCompletionTracker", "WateringVerificationConfig",
+    "WateringVerificationResult", "WateringVerificationState",
+    "AdaptiveBoundarySearchPlan", "AdaptiveSearchRadiusConfig",
+    "BoundaryCheckedSearchPlan", "DockAttemptSupervisor", "DockRetryConfig",
+    "ExitAndReturnPlan", "NavigableBoundaryNED", "RecoveryAction",
+    "RecoveryDecision", "SearchBoundaryConfig",
+    "constrain_search_plan_to_boundary", "plan_adaptive_boundary_safe_circular_search",
+    "plan_boundary_safe_circular_search",
+    "plan_exit_and_return",
+    "GotoReferenceSample", "GotoStatus", "GotoStatusKind", "GotoTargetENU",
+    "ned_goal_to_goto_enu", "parse_goto_status",
+    "MotionCommandArbiter", "MotionCommandArbiterConfig",
+    "MotionCommandDecision", "MotionCommandOwner",
+    "PointCloud2Buffer", "PointCloudXYZQuality", "PointFieldSpec",
+    "pointcloud2_buffer_to_xyz", "pointcloud2_message_to_xyz",
+    "summarize_xyz_quality",
+    "GpsOrigin", "NedOffset", "add_ned_offset", "geodetic_to_ecef",
+    "semantic_map_to_coarse_docks", "transform_semantic_map",
+    "uav_origin_in_usv_ned",
+    "COLOR_SEQUENCE_TOPIC", "COLOR_SEQUENCE_MESSAGE_TYPE", "ColorCode",
+    "ColorSequenceVector", "decode_color_sequence",
 ]

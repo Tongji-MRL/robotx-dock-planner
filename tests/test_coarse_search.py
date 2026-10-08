@@ -3,9 +3,11 @@ import unittest
 
 from dock_planner import (
     CoarseDockCenterObservationNED,
+    CoarseDockCirclePosition,
     CoarseDockSearchConfig,
     NEDPoint,
     Pose2D,
+    classify_coarse_dock_circle_position,
     coarse_dock_staging_pose,
     coarse_dock_search_radius_m,
 )
@@ -44,7 +46,7 @@ class CoarseDockSearchTests(unittest.TestCase):
             stand_off_distance_m=2.0,
             position_uncertainty_m=1.0,
         )
-        expected = math.hypot(6.596 / 2.0, 3.0 / 2.0) + 3.0
+        expected = math.hypot(6.596 / 2.0, 3.0 / 2.0) + 0.92 + 0.10 + 3.0
         self.assertAlmostEqual(config.search_radius_m, expected)
         self.assertAlmostEqual(coarse_dock_search_radius_m(config), expected)
 
@@ -83,6 +85,51 @@ class CoarseDockSearchTests(unittest.TestCase):
         self.assertAlmostEqual(pose.x, 10.0 - config.search_radius_m)
         self.assertAlmostEqual(pose.y, 0.0)
         self.assertAlmostEqual(pose.yaw, 0.0)
+
+    def test_circle_position_distinguishes_inside_on_circle_and_outside(self):
+        config = CoarseDockSearchConfig(
+            dock_length_m=2.0,
+            dock_width_m=2.0,
+            vessel_envelope_radius_m=0.5,
+            dimension_measurement_margin_m=0.1,
+            stand_off_distance_m=1.0,
+            position_uncertainty_m=0.0,
+            circle_reached_tolerance_m=0.2,
+        )
+        center = NEDPoint(10.0, 0.0, 0.0)
+        radius = config.search_radius_m
+        self.assertEqual(
+            classify_coarse_dock_circle_position(
+                Pose2D(10.0 - radius - 1.0, 0.0, 0.0), center, config,
+            ),
+            CoarseDockCirclePosition.OUTSIDE,
+        )
+        self.assertEqual(
+            classify_coarse_dock_circle_position(
+                Pose2D(10.0 - radius + 0.1, 0.0, 0.0), center, config,
+            ),
+            CoarseDockCirclePosition.ON_CIRCLE,
+        )
+        self.assertEqual(
+            classify_coarse_dock_circle_position(
+                Pose2D(10.0 - config.minimum_center_distance_m - 0.2, 0.0, 0.0),
+                center,
+                config,
+            ),
+            CoarseDockCirclePosition.INSIDE,
+        )
+        self.assertEqual(
+            classify_coarse_dock_circle_position(
+                Pose2D(10.0 - config.minimum_center_distance_m + 0.1, 0.0, 0.0),
+                center,
+                config,
+            ),
+            CoarseDockCirclePosition.INSIDE_MINIMUM_CLEARANCE,
+        )
+        self.assertEqual(
+            classify_coarse_dock_circle_position(Pose2D(10.0, 0.0, 0.0), center, config),
+            CoarseDockCirclePosition.CENTER_UNDEFINED,
+        )
 
     def test_staging_pose_rejects_coincident_or_invalid_center(self):
         config = CoarseDockSearchConfig()
