@@ -252,12 +252,18 @@ data:  [tin_color, circle_color]
 输出零速度。ROS 层必须把 goto/terminal 输出重映射到不同输入 topic，并只让 arbiter
 发布最终 `/usv/control/cmd_vel`。
 
+`ObstacleAvoidanceDecision` 是预留给 Task1/Orin 公共避障模块的纯接口，动作包括
+`PROCEED`、`HOLD`、`REPLAN` 和 `ABORT`。仲裁器只在收到新鲜的 `PROCEED` 时允许当前
+控制器继续输出；其他动作和过期结果都会输出零速度。实船可开启
+`require_avoidance_decision=True`，让避障结果缺失也触发停止。该接口不绑定 ROS topic，
+后续只需由公共模块 adapter 填充，不需要修改 DockPlanner。
+
 ### 异常场景审计
 
 [`TASK3_ABNORMAL_SCENARIOS.md`](TASK3_ABNORMAL_SCENARIOS.md) 将任务前、粗定位与接近、
 LiDAR 搜索、颜色与终端靠泊、喷水、返航和系统级故障拆成 158 项。每一项明确标为
 已覆盖、部分覆盖或未覆盖，并给出默认安全动作和下一步。当前统计为 52 项已覆盖、
-33 项部分覆盖、73 项未覆盖；其中 62 项未覆盖问题属于实船自主控制前必须处理的 P0。
+34 项部分覆盖、72 项未覆盖；其中 61 项未覆盖问题属于实船自主控制前必须处理的 P0。
 
 规划安全层现在检查 waypoint 之间的完整线段，而不只检查端点。approach、搜索圆弧、
 terminal、退出和返航均可复用相同的多边形求交与净距逻辑；自交或重复顶点的边界会被

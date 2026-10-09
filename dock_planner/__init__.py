@@ -53,6 +53,7 @@ from .control_arbiter import (
     MotionCommandArbiter, MotionCommandArbiterConfig, MotionCommandDecision,
     MotionCommandOwner,
 )
+from .avoidance_contract import AvoidanceAction, ObstacleAvoidanceDecision
 from .pointcloud_adapter import (
     PointCloud2Buffer, PointCloudXYZQuality, PointFieldSpec,
     pointcloud2_buffer_to_xyz, pointcloud2_message_to_xyz,
@@ -111,6 +112,7 @@ __all__ = [
     "ned_goal_to_goto_enu", "parse_goto_status",
     "MotionCommandArbiter", "MotionCommandArbiterConfig",
     "MotionCommandDecision", "MotionCommandOwner",
+    "AvoidanceAction", "ObstacleAvoidanceDecision",
     "PointCloud2Buffer", "PointCloudXYZQuality", "PointFieldSpec",
     "pointcloud2_buffer_to_xyz", "pointcloud2_message_to_xyz",
     "summarize_xyz_quality",

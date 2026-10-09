@@ -25,6 +25,7 @@
 | P0 | [x] | Task3 到 goto 的纯坐标转换 | 使用同步的当前 NED 和 odom 数据，无需共用原点即可将 NED 目标转为 ENU；支持状态解析 | 使用真实 topic 验证轴向和时间同步 |
 | P0 | [ ] | Task3-to-goto ROS adapter | 纯转换和状态解析已完成 | 订阅当前 NED 与 odom，发布一个 `PointStamped`，消费 status |
 | P0 | [x] | goto/terminal 纯控制权仲裁 | 明确 GOTO、TERMINAL、STOP；缺失、过期、错误 frame 或超限命令均回到零速度 | 在 Orin 增加 ROS topic 重映射和唯一输出 publisher |
+| P0 | [x] | 公共避障模块接入契约 | `PROCEED/HOLD/REPLAN/ABORT` 带有效期；非 PROCEED、过期或严格模式下缺失均强制零速度 | Task1 公共模块确定 ROS 接口后只编写 adapter，并把 REPLAN/ABORT 接入任务监督器 |
 | P0 | [ ] | ROS 速度命令仲裁节点 | goto 和 terminal 当前都面向 `/usv/control/cmd_vel` | 分别重映射输入，只允许仲裁节点发布最终速度 |
 | P0 | [x] | MAVROS 工作区定位 | `/home/robotx/mavros_ws/install` 中已有节点和 local-position/setpoint 插件 | source 后做台架验证；当前终端环境尚未加载该 overlay |
 | P0 | [x] | Mid-360 驱动 | `/livox/lidar` 为 PointCloud2，`livox_frame`，约 10 Hz、单帧约 19968 点；`/livox/imu` 实时约 200 Hz | 保留启动命令和配置，后续做开机启动评审 |
@@ -56,7 +57,7 @@
 
 ## 当前本地验证
 
-- 完整 pytest：`172 passed`。
+- 完整 pytest：`175 passed`。
 - 独立 LiDAR prototype：`18 tests passed`；200 组随机 synthetic 场景严格成功率 98.5%，
   32 个仿真视角中 5 个可见入口视角全部选对最高候选，覆盖 3 个 bay。
 - 真实 Mid-360 bag 抽帧：已验证 `livox_frame`、混合字段解析和全零点过滤。

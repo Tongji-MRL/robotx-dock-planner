@@ -6,6 +6,7 @@ import math
 from numbers import Real
 from typing import Optional
 
+from .avoidance_contract import AvoidanceAction, ObstacleAvoidanceDecision
 from .integration import GenericVelocityCommand
 
 
@@ -33,6 +34,7 @@ class MotionCommandArbiterConfig:
     stop_validity_s: float = 0.2
     max_abs_surge_mps: Optional[float] = None
     max_abs_yaw_rate_rps: Optional[float] = None
+    require_avoidance_decision: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.expected_frame_id, str) or not self.expected_frame_id.strip():
@@ -46,6 +48,8 @@ class MotionCommandArbiterConfig:
             raise ValueError("stop_validity_s must be a positive finite number")
         _positive_optional(self.max_abs_surge_mps, "max_abs_surge_mps")
         _positive_optional(self.max_abs_yaw_rate_rps, "max_abs_yaw_rate_rps")
+        if not isinstance(self.require_avoidance_decision, bool):
+            raise TypeError("require_avoidance_decision must be a bool")
 
 
 @dataclass(frozen=True)
@@ -87,11 +91,18 @@ class MotionCommandArbiter:
         now: float,
         goto_command: Optional[GenericVelocityCommand] = None,
         terminal_command: Optional[GenericVelocityCommand] = None,
+        avoidance_decision: Optional[ObstacleAvoidanceDecision] = None,
     ) -> MotionCommandDecision:
         if isinstance(now, bool) or not isinstance(now, Real) or not math.isfinite(now):
             raise ValueError("now must be a finite real number")
         if self._owner is MotionCommandOwner.STOP:
             return self._stop(now, "no motion controller owns the output")
+        avoidance_stop_reason = self._avoidance_stop_reason(
+            now,
+            avoidance_decision,
+        )
+        if avoidance_stop_reason is not None:
+            return self._stop(now, avoidance_stop_reason)
 
         selected = (
             goto_command
@@ -122,6 +133,26 @@ class MotionCommandArbiter:
             failsafe_stop=False,
             reason=f"forwarding {self._owner.value} command",
         )
+
+    def _avoidance_stop_reason(
+        self,
+        now: float,
+        decision: Optional[ObstacleAvoidanceDecision],
+    ) -> Optional[str]:
+        if decision is None:
+            if self._config.require_avoidance_decision:
+                return "obstacle-avoidance decision is missing"
+            return None
+        if not isinstance(decision, ObstacleAvoidanceDecision):
+            raise TypeError("avoidance_decision must be ObstacleAvoidanceDecision")
+        if not decision.is_valid_at(now):
+            return "obstacle-avoidance decision is stale or not active yet"
+        if decision.action is not AvoidanceAction.PROCEED:
+            return (
+                f"obstacle avoidance requested {decision.action.value}: "
+                f"{decision.reason.strip()}"
+            )
+        return None
 
     def _stop(self, now: float, reason: str) -> MotionCommandDecision:
         return MotionCommandDecision(

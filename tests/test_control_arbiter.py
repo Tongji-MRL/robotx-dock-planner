@@ -1,10 +1,12 @@
 import unittest
 
 from dock_planner import (
+    AvoidanceAction,
     GenericVelocityCommand,
     MotionCommandArbiter,
     MotionCommandArbiterConfig,
     MotionCommandOwner,
+    ObstacleAvoidanceDecision,
 )
 
 
@@ -17,6 +19,15 @@ def command(surge, yaw_rate, *, timestamp=10.0, valid_until=10.5, source="test")
         phase="TEST",
         source=source,
         frame_id="base_link",
+    )
+
+
+def avoidance(action, *, timestamp=10.0, valid_until=10.5):
+    return ObstacleAvoidanceDecision(
+        action=action,
+        timestamp=timestamp,
+        valid_until=valid_until,
+        reason="test navigation safety decision",
     )
 
 
@@ -85,6 +96,55 @@ class MotionCommandArbiterTests(unittest.TestCase):
         self.assertTrue(self.arbiter.select(
             now=10.1, terminal_command=command(0.1, 1.1),
         ).failsafe_stop)
+
+    def test_avoidance_proceed_allows_selected_controller(self):
+        self.arbiter.set_owner(MotionCommandOwner.GOTO)
+        selected = command(1.0, 0.1)
+        decision = self.arbiter.select(
+            now=10.1,
+            goto_command=selected,
+            avoidance_decision=avoidance(AvoidanceAction.PROCEED),
+        )
+
+        self.assertIs(decision.command, selected)
+        self.assertFalse(decision.failsafe_stop)
+
+    def test_avoidance_hold_replan_abort_and_stale_all_stop(self):
+        self.arbiter.set_owner(MotionCommandOwner.GOTO)
+        for action in (
+            AvoidanceAction.HOLD,
+            AvoidanceAction.REPLAN,
+            AvoidanceAction.ABORT,
+        ):
+            with self.subTest(action=action):
+                decision = self.arbiter.select(
+                    now=10.1,
+                    goto_command=command(1.0, 0.1),
+                    avoidance_decision=avoidance(action),
+                )
+                self.assertTrue(decision.failsafe_stop)
+                self.assertIn(action.value, decision.reason)
+        stale = self.arbiter.select(
+            now=11.0,
+            goto_command=command(1.0, 0.1, valid_until=12.0),
+            avoidance_decision=avoidance(
+                AvoidanceAction.PROCEED,
+                valid_until=10.5,
+            ),
+        )
+        self.assertTrue(stale.failsafe_stop)
+        self.assertIn("stale", stale.reason)
+
+    def test_strict_mode_stops_when_avoidance_decision_is_missing(self):
+        arbiter = MotionCommandArbiter(MotionCommandArbiterConfig(
+            require_avoidance_decision=True,
+        ))
+        arbiter.set_owner(MotionCommandOwner.GOTO)
+
+        decision = arbiter.select(now=10.1, goto_command=command(1.0, 0.1))
+
+        self.assertTrue(decision.failsafe_stop)
+        self.assertIn("missing", decision.reason)
 
 
 if __name__ == "__main__":
