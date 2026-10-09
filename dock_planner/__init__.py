@@ -31,18 +31,19 @@ from .dock_perception import (
 from .types import DockSpec, PlannerConfig, PlanResult, PlanStatus, Pose2D
 from .watering import (
     WateringCompletionTracker, WateringVerificationConfig,
+    WateringSequenceController, WateringSequenceResult, WateringSequenceState,
     WateringVerificationResult, WateringVerificationState,
 )
 from .mission_safety import (
     AdaptiveBoundarySearchPlan, AdaptiveSearchRadiusConfig,
-    BoundaryCheckedSearchPlan, BoundaryPathValidation,
+    BayExitPlan, BoundaryCheckedSearchPlan, BoundaryPathValidation,
     DockAttemptSupervisor, DockRetryConfig,
     ExitAndReturnPlan, NavigableBoundaryNED, RecoveryAction, RecoveryDecision,
     SafeReturnGoalConfig,
     SearchBoundaryConfig, constrain_search_plan_to_boundary,
     plan_adaptive_boundary_safe_circular_search,
     plan_boundary_safe_circular_search, plan_exit_and_return,
-    select_safe_return_goal,
+    plan_non_target_bay_exit, select_safe_return_goal,
     validate_pose_path_to_boundary, validate_terminal_plan_to_boundary,
 )
 from .goto_adapter import (
@@ -105,7 +106,9 @@ __all__ = [
     "filter_point_cloud", "generate_synthetic_dock_point_cloud",
     "WateringCompletionTracker", "WateringVerificationConfig",
     "WateringVerificationResult", "WateringVerificationState",
+    "WateringSequenceController", "WateringSequenceResult", "WateringSequenceState",
     "AdaptiveBoundarySearchPlan", "AdaptiveSearchRadiusConfig",
+    "BayExitPlan",
     "BoundaryCheckedSearchPlan", "BoundaryPathValidation",
     "DockAttemptSupervisor", "DockRetryConfig",
     "ExitAndReturnPlan", "NavigableBoundaryNED", "RecoveryAction",
@@ -113,6 +116,7 @@ __all__ = [
     "constrain_search_plan_to_boundary", "plan_adaptive_boundary_safe_circular_search",
     "plan_boundary_safe_circular_search",
     "plan_exit_and_return",
+    "plan_non_target_bay_exit",
     "select_safe_return_goal",
     "validate_pose_path_to_boundary", "validate_terminal_plan_to_boundary",
     "GotoReferenceSample", "GotoStatus", "GotoStatusKind", "GotoTargetENU",

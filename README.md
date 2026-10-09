@@ -247,6 +247,19 @@ data:  [tin_color, circle_color]
 连续确认 GREEN 5 秒才报告完成；感知中断会重新计时，但不会请求自动重启水泵。
 它只产生决策，不调用真实水泵接口。
 
+`WateringSequenceController` 将停泊后的喷水步骤串起来：
+
+```text
+DOCKED -> WAITING_FOR_RED -> AIMING -> SPRAYING
+       -> VERIFYING_GREEN -> COMPLETE
+```
+
+红色窗口由 `target_valid=true, delivery_confirmed=false` 表示；云台报告 ready 后
+才产生一次 `pump_on_requested`。首次收到绿色窗口时产生一次
+`pump_off_requested`，并要求绿色连续保持 5 秒才报告 `watering_complete`。
+该类只输出决策，不调用 `/pump/set`，也不直接控制云台；ROS adapter 负责执行这些
+决策。
+
 `MotionCommandArbiter` 为 goto、terminal 和安全停止提供显式控制权。只有当前 owner 的
 新鲜 `GenericVelocityCommand` 可以通过；缺命令、过期、frame 不符或超过配置限制时
 输出零速度。ROS 层必须把 goto/terminal 输出重映射到不同输入 topic，并只让 arbiter
@@ -269,6 +282,9 @@ LiDAR 搜索、颜色与终端靠泊、喷水、返航和系统级故障拆成 1
 terminal、退出和返航均可复用相同的多边形求交与净距逻辑；自交或重复顶点的边界会被
 拒绝。`BayVisitTracker` 用入口中心距离关联 bay，避免重复检查已拒绝或 terminal 失败的
 入口，并在三个预期 bay 全部不可用时结束搜索。
+颜色不匹配后，`Task3FlowManager.prepare_non_target_bay_exit()` 会生成“当前船位 →
+入口中心 → 入口外侧”的连续退出路径；执行器完成退出后再调用 `next_bay()`，恢复搜索，
+不会把船留在错误 bay 内直接继续绕行。
 `select_safe_return_goal()` 会优先保留人工配置且安全的等待点；首选点不满足边界净距或
 dock 最小距离时，才在边界内确定性选择最近的安全替代点。
 Task3 flow 还提供独立的入口和 bay 颜色最低置信度门；低于门限的结果不会触发状态前进。

@@ -766,6 +766,77 @@ class ExitAndReturnPlan:
 
 
 @dataclass(frozen=True)
+class BayExitPlan:
+    """Safe waypoints for leaving a verified non-target bay."""
+
+    entrance_waypoint: Pose2D
+    exit_goal: Pose2D
+    waypoints: Tuple[Pose2D, ...]
+    minimum_boundary_clearance_m: Optional[float] = None
+
+
+def plan_non_target_bay_exit(
+    entrance: PreciseEntrancePoseNED,
+    current_pose: Pose2D,
+    *,
+    exit_distance_m: float = 3.0,
+    boundary: Optional[NavigableBoundaryNED] = None,
+    min_boundary_clearance_m: float = 0.0,
+) -> BayExitPlan:
+    """Plan an exit through a known entrance after its bay is rejected.
+
+    ``entrance.heading_rad`` points into the bay, so the exit direction is its
+    opposite. The path first reaches the entrance center, then continues
+    outside by ``exit_distance_m``. This is a geometry-only plan; the caller
+    must wait for the goto controller to confirm each segment before resuming
+    search.
+    """
+
+    if not isinstance(entrance, PreciseEntrancePoseNED) or not entrance.valid:
+        raise ValueError("a valid precise entrance pose is required")
+    if not isinstance(current_pose, Pose2D):
+        raise TypeError("current_pose must be a Pose2D")
+    if not _finite(exit_distance_m) or exit_distance_m <= 0:
+        raise ValueError("exit_distance_m must be positive and finite")
+    if not _finite(min_boundary_clearance_m) or min_boundary_clearance_m < 0:
+        raise ValueError("min_boundary_clearance_m must be finite and nonnegative")
+
+    outward_heading = math.atan2(
+        math.sin(entrance.heading_rad + math.pi),
+        math.cos(entrance.heading_rad + math.pi),
+    )
+    entrance_waypoint = Pose2D(
+        entrance.x_ned,
+        entrance.y_ned,
+        outward_heading,
+    )
+    exit_goal = Pose2D(
+        entrance.x_ned - exit_distance_m * math.cos(entrance.heading_rad),
+        entrance.y_ned - exit_distance_m * math.sin(entrance.heading_rad),
+        outward_heading,
+    )
+    waypoints = (current_pose, entrance_waypoint, exit_goal)
+    minimum_clearance = None
+    if boundary is not None:
+        if not isinstance(boundary, NavigableBoundaryNED):
+            raise TypeError("boundary must be None or a NavigableBoundaryNED")
+        validation = validate_pose_path_to_boundary(
+            waypoints,
+            boundary,
+            min_boundary_clearance_m=min_boundary_clearance_m,
+        )
+        if not validation.valid:
+            raise ValueError(f"non-target bay exit path is unsafe: {validation.reason}")
+        minimum_clearance = validation.minimum_clearance_m
+    return BayExitPlan(
+        entrance_waypoint=entrance_waypoint,
+        exit_goal=exit_goal,
+        waypoints=waypoints,
+        minimum_boundary_clearance_m=minimum_clearance,
+    )
+
+
+@dataclass(frozen=True)
 class SafeReturnGoalConfig:
     min_dock_distance_m: float
     min_boundary_clearance_m: float = 1.0
@@ -932,6 +1003,7 @@ __all__ = [
     "AdaptiveSearchRadiusConfig",
     "BoundaryPathValidation",
     "BoundaryCheckedSearchPlan",
+    "BayExitPlan",
     "DockAttemptSupervisor",
     "DockRetryConfig",
     "ExitAndReturnPlan",
@@ -944,6 +1016,7 @@ __all__ = [
     "plan_boundary_safe_circular_search",
     "plan_adaptive_boundary_safe_circular_search",
     "plan_exit_and_return",
+    "plan_non_target_bay_exit",
     "select_safe_return_goal",
     "validate_pose_path_to_boundary",
     "validate_terminal_plan_to_boundary",

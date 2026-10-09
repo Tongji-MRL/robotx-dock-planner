@@ -136,6 +136,11 @@ def main() -> None:
         BayColorObservation("RED", 0.95, 102.2, "mock_color"), now=102.3,
     )
     _show(manager, "red bay rejected")
+    exit_plan = manager.prepare_non_target_bay_exit()
+    print(
+        "non-target exit goal        = "
+        f"({exit_plan.exit_goal.x:.3f}, {exit_plan.exit_goal.y:.3f})"
+    )
     manager.next_bay()
     manager.search_waypoint_reached()
     _show(manager, "arc search resumed")

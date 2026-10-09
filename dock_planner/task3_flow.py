@@ -38,8 +38,10 @@ from .bay_search import (
 )
 from .planner import DockPlanner
 from .mission_safety import (
+    BayExitPlan,
     BoundaryPathValidation,
     NavigableBoundaryNED,
+    plan_non_target_bay_exit,
     validate_terminal_plan_to_boundary,
 )
 from .types import PlanResult, PlanStatus, Pose2D
@@ -126,6 +128,7 @@ class Task3FlowManager:
         self._terminal_input: Optional[TerminalPlanInput] = None
         self._plan: Optional[PlanResult] = None
         self._terminal_boundary_validation: Optional[BoundaryPathValidation] = None
+        self._non_target_exit_plan: Optional[BayExitPlan] = None
         self._error: Optional[str] = None
         self._active_bay_index: Optional[int] = None
 
@@ -148,6 +151,11 @@ class Task3FlowManager:
     @property
     def terminal_boundary_validation(self) -> Optional[BoundaryPathValidation]:
         return self._terminal_boundary_validation
+
+    @property
+    def non_target_exit_plan(self) -> Optional[BayExitPlan]:
+        """Exit plan prepared after a bay color mismatch, if any."""
+        return self._non_target_exit_plan
 
     @property
     def error(self) -> Optional[str]:
@@ -192,6 +200,7 @@ class Task3FlowManager:
         self._terminal_input = None
         self._plan = None
         self._terminal_boundary_validation = None
+        self._non_target_exit_plan = None
         self._search_plan = None
         self._coarse_circle_position = None
         self._search_waypoint_index = 0
@@ -362,6 +371,11 @@ class Task3FlowManager:
             if decision.action is BayCandidateAction.SEARCH_EXHAUSTED:
                 self.fail("all expected dock bays have been rejected or failed")
                 return None
+            self._precise_entrance = entrance_observation_to_precise_pose(
+                self._entrance_observation,
+                dock_id=self._coarse_dock.dock_id if self._coarse_dock else None,
+            )
+            self._non_target_exit_plan = None
             self._state = Task3FlowState.NEXT_BAY
             return None
         if self._coarse_dock is None or self._entrance_observation is None or self._current_pose is None:
@@ -405,12 +419,34 @@ class Task3FlowManager:
         return self._plan
 
     def next_bay(self) -> None:
-        """Finish the rejected-bay step and resume searching for an entrance."""
+        """Resume search after the caller has completed the exit plan."""
         self._require(Task3FlowState.NEXT_BAY)
         self._entrance_observation = None
         self._current_pose = None
         self._active_bay_index = None
+        self._non_target_exit_plan = None
         self._state = Task3FlowState.SEARCH_DOCK
+
+    def prepare_non_target_bay_exit(
+        self,
+        *,
+        exit_distance_m: float = 3.0,
+        boundary: Optional[NavigableBoundaryNED] = None,
+        min_boundary_clearance_m: float = 0.0,
+    ) -> BayExitPlan:
+        """Create the exit path that must be executed before ``next_bay``."""
+
+        self._require(Task3FlowState.NEXT_BAY)
+        if self._precise_entrance is None or self._current_pose is None:
+            raise RuntimeError("rejected bay has no entrance/current pose context")
+        self._non_target_exit_plan = plan_non_target_bay_exit(
+            self._precise_entrance,
+            self._current_pose,
+            exit_distance_m=exit_distance_m,
+            boundary=boundary,
+            min_boundary_clearance_m=min_boundary_clearance_m,
+        )
+        return self._non_target_exit_plan
 
     def docking_complete(self) -> None:
         self._require(Task3FlowState.TERMINAL_DOCKING)

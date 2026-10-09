@@ -17,6 +17,7 @@ from dock_planner import (
     PlanStatus,
     Pose2D,
     PreciseEntrancePoseNED,
+    plan_non_target_bay_exit,
     RecoveryAction,
     SafeReturnGoalConfig,
     SearchBoundaryConfig,
@@ -376,6 +377,26 @@ class RecoveryTests(unittest.TestCase):
                 exit_distance_m=3.0,
                 boundary=boundary_with_notch(),
             )
+
+    def test_non_target_bay_exit_uses_entrance_then_outward_goal(self):
+        entrance = PreciseEntrancePoseNED(
+            x_ned=2.0,
+            y_ned=3.0,
+            heading_rad=0.0,
+            timestamp=10.0,
+            valid=True,
+        )
+        plan = plan_non_target_bay_exit(
+            entrance,
+            Pose2D(3.5, 3.0, 0.0),
+            exit_distance_m=3.0,
+            boundary=rectangle(-5.0, 8.0, -5.0, 8.0),
+        )
+
+        self.assertEqual(plan.entrance_waypoint, Pose2D(2.0, 3.0, math.pi))
+        self.assertEqual(plan.exit_goal, Pose2D(-1.0, 3.0, math.pi))
+        self.assertEqual(plan.waypoints[0], Pose2D(3.5, 3.0, 0.0))
+        self.assertIsNotNone(plan.minimum_boundary_clearance_m)
 
     def test_safe_return_goal_preserves_safe_preference_or_repairs_it(self):
         boundary = rectangle(-10.0, 10.0, -10.0, 10.0)

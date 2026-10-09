@@ -18,6 +18,7 @@
 | P0 | [x] | 不同场地可航边界判断 | 同时检查顺/逆时针；切除不安全圆弧；两边均失败时可在明确的最小 stand-off 以上逐级缩小半径；圆内向外到 staging 的路径也检查；随机场地测试通过 | 现场换成真实可航行边界，并根据船体尺寸确定最小 stand-off；接入 executor 前仍不可视为实船闭环 |
 | P0 | [x] | 全路径连续边界检查 | approach、搜索圆弧 chord、terminal、退出和返航每段均做多边形求交与最小净距检查；自交边界被拒绝 | 动态障碍和 dock 实体仍需独立障碍层 |
 | P1 | [x] | Bay 去重和失败记忆 | 入口中心距离关联；颜色拒绝或 terminal 失败后跳过；三个 bay 全部不可用时结束搜索 | 用真实入口数据标定关联距离，并接 executor 失败事件 |
+| P1 | [x] | 非目标 bay 安全退出 | 颜色不匹配后生成当前船位到入口中心再到入口外侧的连续路径，执行完成后才恢复搜索 | 接 executor 的 goto 完成/失败反馈；用真实 dock 净空确认退出距离 |
 | P1 | [x] | 入口与颜色置信度门 | flow 分别配置最低 entrance confidence 和 bay color confidence；低于门限保持观察，不进入靠泊 | 用真实数据标定两个门限 |
 | P1 | [x] | 安全返航等待点选择 | 合法首选点保持不变；不安全首选点可在场地边界内按岸边净距和 dock 最小距离确定性修复 | 每个正式场地仍需人工给出首选等待区域 |
 | P0 | [x] | ArduPilot 官方 ROS2 目标接口审计 | 官方 DDS 使用 `/ap/cmd_gps_pose`；局部位置反馈为 ENU | Task3 内部继续使用 NED，所有转换放在 adapter |
@@ -42,6 +43,7 @@
 | P1 | [x] | 感知接口 staging adapter | A–I mock 覆盖颜色、对齐、入口 JSON、stale、bay mismatch、resources；13 个单测和隔离 ROS 测试通过 | 尚未合入正式 executor；entrance 仍是 camera optical frame，不能直接生成 terminal pose |
 | P1 | [x] | 喷水感知接口确认 | `/robotx/perception/sprayer/active_window_3d` 为 `LEDObservation`；桥接输出 `/vision/target_observation` 为 `TargetObservation`；Orin mock RED/GREEN 已验证 | 现场再确认感知实际频率和丢帧情况 |
 | P1 | [x] | 喷水完成判定 | Orin 隔离 domain 已验证首次 GREEN 停泵、连续 GREEN 5 秒完成、中断重新计时、stale/fault 不完成 | 合入正式 executor 后重复 dry run |
+| P1 | [x] | 停泊到喷水纯逻辑串联 | `WateringSequenceController` 已覆盖 `DOCKED -> 红窗 -> 云台 ready -> 开泵 -> 绿窗 -> 停泵 -> 5 秒完成`；新增场景测试通过 | ROS adapter 仍需调用真实 `/pump/set` 和云台接口 |
 | P1 | [ ] | 水泵控制 adapter | staging ROS adapter 已通过 15 个单测和 4 个 mock 场景，只发送 `SetPump(on=false)`；MockPumpBackend 状态经过 TRACKING/LOCKED/SPRAYING/off | 尚未合入正式 Task3；硬件负责人确认后再做 Relay4 无水台架测试 |
 | P1 | [x] | 资源颜色序列解析 | 已解析锡罐/resource 颜色和圆圈/destination 颜色；staging 已验证有效、UNKNOWN、缺字段和 `CORE_COMPLETE` 变体 | 在 Orin 订阅正式 topic，交给 USV 状态机 |
 | P1 | [x] | 颜色序列接口契约 | staging 已固定 `/tongji_mrl/twave/task3/color_sequence` + `std_msgs/msg/Int32MultiArray`；`data=[tin_color,circle_color]`，6 个颜色编码和 UNKNOWN 规则已测试 | 交给 communication 模块和 UAV/OCS 负责人确认并接收 |
@@ -57,7 +59,7 @@
 
 ## 当前本地验证
 
-- 完整 pytest：`175 passed`。
+- 完整 pytest：`185 passed`。
 - 独立 LiDAR prototype：`18 tests passed`；200 组随机 synthetic 场景严格成功率 98.5%，
   32 个仿真视角中 5 个可见入口视角全部选对最高候选，覆盖 3 个 bay。
 - 真实 Mid-360 bag 抽帧：已验证 `livox_frame`、混合字段解析和全零点过滤。
