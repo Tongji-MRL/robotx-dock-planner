@@ -14,10 +14,9 @@ USV 操作：
 - 记录当天日期、天气和 dock 入口的大致位置。
 - 手机准备拍摄 USV 与 dock 的合照。
 
-## 1. 终端 A：SSH 到 USV Orin
+## 1. 终端 A：确认当前 Orin 终端和本次文件名
 
 ```bash
-ssh robotx@100.91.153.16
 source /opt/ros/humble/setup.bash
 source /home/robotx/livox_ws/install/setup.bash
 source /home/robotx/robotx_ws/install/setup.bash
@@ -26,14 +25,33 @@ date
 df -h /home/robotx
 ```
 
-确认工作区和磁盘正常后保持这个终端打开。
+每次测试前，在终端 A 单独设置本次文件名。只修改最后一行的名字：
+
+```bash
+mkdir -p /home/robotx/livox_ws/bags/task3_water
+TEST_NAME=near_20261009_1430
+BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
+echo "本次录包目录：$BAG"
+```
+
+确认屏幕显示的目录名正确后，再把同样的 `TEST_NAME` 和 `BAG` 变量复制到其他终端。
+
+示例：
+
+```text
+near_20261009_1430       近距离
+mid_20261009_1445        中距离
+far_20261009_1500        远距离
+slow_pass_20261009_1515  慢速经过
+```
+
+确认工作区、磁盘和本次文件名都正确后保持这个终端打开。
 
 ## 2. 终端 B：启动 Mid-360 驱动
 
-新开一个 SSH 终端，执行：
+新开一个 Orin 终端，执行：
 
 ```bash
-ssh robotx@100.91.153.16
 source /opt/ros/humble/setup.bash
 source /home/robotx/livox_ws/install/setup.bash
 ros2 pkg prefix livox_ros_driver2
@@ -51,7 +69,6 @@ find /home/robotx/livox_ws -name '*MID360*launch.py' -o -name '*mid360*launch.py
 ## 3. 终端 C：确认点云和 TF
 
 ```bash
-ssh robotx@100.91.153.16
 source /opt/ros/humble/setup.bash
 source /home/robotx/livox_ws/install/setup.bash
 source /home/robotx/robotx_ws/install/setup.bash
@@ -73,13 +90,20 @@ ros2 run tf2_ros tf2_echo base_link livox_frame
 
 ## 4. 终端 D：开始录包
 
-```bash
-ssh robotx@100.91.153.16
-source /opt/ros/humble/setup.bash
+先在终端 D 输入同一个文件名变量。必须与终端 A 完全一致：
 
-mkdir -p /home/robotx/livox_ws/bags/task3_water
+```bash
+source /opt/ros/humble/setup.bash
+TEST_NAME=near_20261009_1430
+BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
+echo "即将录制：$BAG"
+```
+
+确认目录名无误后开始录包：
+
+```bash
 ros2 bag record \
-  -o /home/robotx/livox_ws/bags/task3_water/near_YYYYMMDD_HHMMSS \
+  -o "$BAG" \
   /livox/lidar /tf /tf_static
 ```
 
@@ -104,18 +128,21 @@ USV 操作：
 终端 D：
 
 ```bash
-ros2 bag info /home/robotx/livox_ws/bags/task3_water/near_YYYYMMDD_HHMMSS
+ros2 bag info "$BAG"
 ```
 
 确认消息数量大于 0、包含 `/livox/lidar` 后，再进入下一组。
 
 ## 6. 中距离静态点：约 4 m
 
-重新在终端 D 开始录包：
+重新在终端 D 设置新的文件名并开始录包：
 
 ```bash
+TEST_NAME=mid_20261009_1445
+BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
+echo "即将录制：$BAG"
 ros2 bag record \
-  -o /home/robotx/livox_ws/bags/task3_water/mid_YYYYMMDD_HHMMSS \
+  -o "$BAG" \
   /livox/lidar /tf /tf_static
 ```
 
@@ -129,14 +156,17 @@ USV 操作：
 检查：
 
 ```bash
-ros2 bag info /home/robotx/livox_ws/bags/task3_water/mid_YYYYMMDD_HHMMSS
+ros2 bag info "$BAG"
 ```
 
 ## 7. 远距离静态点：约 6 m
 
 ```bash
+TEST_NAME=far_20261009_1500
+BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
+echo "即将录制：$BAG"
 ros2 bag record \
-  -o /home/robotx/livox_ws/bags/task3_water/far_YYYYMMDD_HHMMSS \
+  -o "$BAG" \
   /livox/lidar /tf /tf_static
 ```
 
@@ -153,8 +183,11 @@ USV 操作：
 终端 D：
 
 ```bash
+TEST_NAME=slow_pass_20261009_1515
+BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
+echo "即将录制：$BAG"
 ros2 bag record \
-  -o /home/robotx/livox_ws/bags/task3_water/slow_pass_YYYYMMDD_HHMMSS \
+  -o "$BAG" \
   /livox/lidar /tf /tf_static
 ```
 
