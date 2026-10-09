@@ -14,7 +14,7 @@ USV 操作：
 - 记录当天日期、天气和 dock 入口的大致位置。
 - 手机准备拍摄 USV 与 dock 的合照。
 
-## 1. 终端 A：确认当前 Orin 终端和本次文件名
+## 1. 终端 A：确认当前 Orin 终端
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -25,27 +25,7 @@ date
 df -h /home/robotx
 ```
 
-每次测试前，在终端 A 单独设置本次文件名。只修改最后一行的名字：
-
-```bash
-mkdir -p /home/robotx/livox_ws/bags/task3_water
-TEST_NAME=near_20261009_1430
-BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
-echo "本次录包目录：$BAG"
-```
-
-确认屏幕显示的目录名正确后，再把同样的 `TEST_NAME` 和 `BAG` 变量复制到其他终端。
-
-示例：
-
-```text
-near_20261009_1430       近距离
-mid_20261009_1445        中距离
-far_20261009_1500        远距离
-slow_pass_20261009_1515  慢速经过
-```
-
-确认工作区、磁盘和本次文件名都正确后保持这个终端打开。
+确认工作区和磁盘正常后保持这个终端打开。每次录包的目录名会在终端 D 中由当前时间自动生成，不需要手动改文件名。
 
 ## 2. 终端 B：启动 Mid-360 驱动
 
@@ -90,12 +70,12 @@ ros2 run tf2_ros tf2_echo base_link livox_frame
 
 ## 4. 终端 D：开始录包
 
-先在终端 D 输入同一个文件名变量。必须与终端 A 完全一致：
+先在终端 D 创建本次录包目录。目录名使用当前时间自动生成：
 
 ```bash
 source /opt/ros/humble/setup.bash
-TEST_NAME=near_20261009_1430
-BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
+mkdir -p /home/robotx/livox_ws/bags/task3_water
+BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
 echo "即将录制：$BAG"
 ```
 
@@ -135,11 +115,10 @@ ros2 bag info "$BAG"
 
 ## 6. 中距离静态点：约 4 m
 
-重新在终端 D 设置新的文件名并开始录包：
+重新在终端 D 生成当前时间目录并开始录包：
 
 ```bash
-TEST_NAME=mid_20261009_1445
-BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
+BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
 echo "即将录制：$BAG"
 ros2 bag record \
   -o "$BAG" \
@@ -162,8 +141,7 @@ ros2 bag info "$BAG"
 ## 7. 远距离静态点：约 6 m
 
 ```bash
-TEST_NAME=far_20261009_1500
-BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
+BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
 echo "即将录制：$BAG"
 ros2 bag record \
   -o "$BAG" \
@@ -183,8 +161,7 @@ USV 操作：
 终端 D：
 
 ```bash
-TEST_NAME=slow_pass_20261009_1515
-BAG=/home/robotx/livox_ws/bags/task3_water/$TEST_NAME
+BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
 echo "即将录制：$BAG"
 ros2 bag record \
   -o "$BAG" \
