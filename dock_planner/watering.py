@@ -14,6 +14,17 @@ class WateringVerificationState(str, Enum):
     COMPLETE = "COMPLETE"
 
 
+class WateringSequenceState(str, Enum):
+    """High-level states around docking, aiming and water verification."""
+
+    WAITING_FOR_DOCKED = "WAITING_FOR_DOCKED"
+    WAITING_FOR_RED = "WAITING_FOR_RED"
+    AIMING = "AIMING"
+    SPRAYING = "SPRAYING"
+    VERIFYING_GREEN = "VERIFYING_GREEN"
+    COMPLETE = "COMPLETE"
+
+
 @dataclass(frozen=True)
 class WateringVerificationConfig:
     """Timing required before reporting water delivery as complete."""
@@ -38,6 +49,15 @@ class WateringVerificationResult:
     stop_pump_requested: bool
     watering_complete: bool
     confirmed_green_s: float
+
+
+@dataclass(frozen=True)
+class WateringSequenceResult:
+    state: WateringSequenceState
+    pump_on_requested: bool = False
+    pump_off_requested: bool = False
+    watering_complete: bool = False
+    reason: str = ""
 
 
 class WateringCompletionTracker:
@@ -123,3 +143,101 @@ class WateringCompletionTracker:
             watering_complete=self._state is WateringVerificationState.COMPLETE,
             confirmed_green_s=max(0.0, elapsed),
         )
+
+
+class WateringSequenceController:
+    """Pure orchestration for the docked-to-watering sequence.
+
+    The controller consumes already-decoded observations.  It does not call a
+    ROS service or command a gimbal.  ``pump_on_requested`` and
+    ``pump_off_requested`` are one-shot decisions for the outer adapter.
+
+    A red window is represented by ``target_valid=True`` and
+    ``delivery_confirmed=False``.  A green completion observation is
+    represented by ``delivery_confirmed=True`` and may have
+    ``target_valid=False``.
+    """
+
+    def __init__(
+        self,
+        verification_config: WateringVerificationConfig = WateringVerificationConfig(),
+    ) -> None:
+        self._verification_config = verification_config
+        self._tracker = WateringCompletionTracker(verification_config)
+        self.reset()
+
+    @property
+    def state(self) -> WateringSequenceState:
+        return self._state
+
+    def reset(self) -> None:
+        self._state = WateringSequenceState.WAITING_FOR_DOCKED
+        self._tracker.reset()
+        self._red_seen = False
+
+    def on_docked(self) -> WateringSequenceResult:
+        """Start looking for the red spraying window after DOCKED."""
+
+        if self._state is not WateringSequenceState.WAITING_FOR_DOCKED:
+            raise RuntimeError(f"expected WAITING_FOR_DOCKED, got {self._state.value}")
+        self._state = WateringSequenceState.WAITING_FOR_RED
+        return self._result()
+
+    def on_window_observation(
+        self,
+        observation: SprayerTargetObservation,
+        *,
+        now: Optional[float] = None,
+    ) -> WateringSequenceResult:
+        """Consume red/green window status from the gimbal perception bridge."""
+
+        if not isinstance(observation, SprayerTargetObservation):
+            raise TypeError("observation must be a SprayerTargetObservation")
+        if now is not None and not observation.is_fresh_at(
+            now, self._verification_config.observation_timeout_s
+        ):
+            return self._result("stale sprayer window observation")
+
+        if self._state is WateringSequenceState.WAITING_FOR_RED:
+            if observation.target_valid and not observation.delivery_confirmed:
+                self._red_seen = True
+                self._state = WateringSequenceState.AIMING
+            return self._result()
+
+        if self._state is WateringSequenceState.AIMING:
+            return self._result("waiting for gimbal ready")
+
+        if self._state not in (
+            WateringSequenceState.SPRAYING,
+            WateringSequenceState.VERIFYING_GREEN,
+        ):
+            return self._result()
+
+        verification = self._tracker.update(observation, now=now)
+        pump_off = verification.stop_pump_requested and self._state is WateringSequenceState.SPRAYING
+        if verification.watering_complete:
+            self._state = WateringSequenceState.COMPLETE
+        elif verification.stop_pump_requested:
+            self._state = WateringSequenceState.VERIFYING_GREEN
+        return WateringSequenceResult(
+            state=self._state,
+            pump_off_requested=pump_off,
+            watering_complete=verification.watering_complete,
+            reason="",
+        )
+
+    def on_gimbal_ready(self, ready: bool) -> WateringSequenceResult:
+        """Start spraying once the gimbal reports a valid aiming state."""
+
+        if not isinstance(ready, bool):
+            raise TypeError("ready must be a boolean")
+        if self._state is WateringSequenceState.AIMING and ready:
+            self._state = WateringSequenceState.SPRAYING
+            return WateringSequenceResult(
+                state=self._state,
+                pump_on_requested=True,
+            )
+        return self._result("waiting for red window" if not self._red_seen else "")
+
+    def _result(self, reason: str = "") -> WateringSequenceResult:
+        return WateringSequenceResult(state=self._state, reason=reason)
