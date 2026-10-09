@@ -22,7 +22,10 @@ from .integration import (
     NEDPoint,
     PreciseEntrancePoseNED,
 )
-from .types import Pose2D
+from .types import PlanResult, PlanStatus, Pose2D
+
+
+_GEOMETRY_EPSILON = 1e-9
 
 
 def _finite(value: object) -> bool:
@@ -47,6 +50,70 @@ def _point_segment_distance(
     return math.hypot(x - nearest_x, y - nearest_y)
 
 
+def _orientation(a: NEDPoint, b: NEDPoint, c: NEDPoint) -> float:
+    return (
+        (b.north - a.north) * (c.east - a.east)
+        - (b.east - a.east) * (c.north - a.north)
+    )
+
+
+def _on_segment(a: NEDPoint, b: NEDPoint, point: NEDPoint) -> bool:
+    return (
+        min(a.north, b.north) - _GEOMETRY_EPSILON
+        <= point.north
+        <= max(a.north, b.north) + _GEOMETRY_EPSILON
+        and min(a.east, b.east) - _GEOMETRY_EPSILON
+        <= point.east
+        <= max(a.east, b.east) + _GEOMETRY_EPSILON
+        and abs(_orientation(a, b, point)) <= _GEOMETRY_EPSILON
+    )
+
+
+def _segments_intersect(
+    first_start: NEDPoint,
+    first_end: NEDPoint,
+    second_start: NEDPoint,
+    second_end: NEDPoint,
+) -> bool:
+    o1 = _orientation(first_start, first_end, second_start)
+    o2 = _orientation(first_start, first_end, second_end)
+    o3 = _orientation(second_start, second_end, first_start)
+    o4 = _orientation(second_start, second_end, first_end)
+    if (
+        ((o1 > _GEOMETRY_EPSILON and o2 < -_GEOMETRY_EPSILON)
+         or (o1 < -_GEOMETRY_EPSILON and o2 > _GEOMETRY_EPSILON))
+        and ((o3 > _GEOMETRY_EPSILON and o4 < -_GEOMETRY_EPSILON)
+             or (o3 < -_GEOMETRY_EPSILON and o4 > _GEOMETRY_EPSILON))
+    ):
+        return True
+    return any((
+        abs(o1) <= _GEOMETRY_EPSILON and _on_segment(first_start, first_end, second_start),
+        abs(o2) <= _GEOMETRY_EPSILON and _on_segment(first_start, first_end, second_end),
+        abs(o3) <= _GEOMETRY_EPSILON and _on_segment(second_start, second_end, first_start),
+        abs(o4) <= _GEOMETRY_EPSILON and _on_segment(second_start, second_end, first_end),
+    ))
+
+
+def _segment_segment_distance(
+    first_start: NEDPoint,
+    first_end: NEDPoint,
+    second_start: NEDPoint,
+    second_end: NEDPoint,
+) -> float:
+    if _segments_intersect(first_start, first_end, second_start, second_end):
+        return 0.0
+    return min(
+        _point_segment_distance(first_start.north, first_start.east, second_start, second_end),
+        _point_segment_distance(first_end.north, first_end.east, second_start, second_end),
+        _point_segment_distance(second_start.north, second_start.east, first_start, first_end),
+        _point_segment_distance(second_end.north, second_end.east, first_start, first_end),
+    )
+
+
+def _pose_point(pose: Pose2D) -> NEDPoint:
+    return NEDPoint(pose.x, pose.y, 0.0)
+
+
 @dataclass(frozen=True)
 class NavigableBoundaryNED:
     """A simple polygon describing water that the mission may use."""
@@ -59,13 +126,35 @@ class NavigableBoundaryNED:
         vertices = tuple(self.vertices)
         if not all(isinstance(point, NEDPoint) for point in vertices):
             raise ValueError("boundary vertices must be NEDPoint values")
+        if len({(point.north, point.east) for point in vertices}) != len(vertices):
+            raise ValueError("boundary vertices must be distinct")
+        edges = tuple(zip(vertices, vertices[1:] + vertices[:1]))
+        for first_index, (first_start, first_end) in enumerate(edges):
+            for second_index in range(first_index + 1, len(edges)):
+                if second_index in {
+                    first_index,
+                    first_index + 1,
+                } or (first_index == 0 and second_index == len(edges) - 1):
+                    continue
+                second_start, second_end = edges[second_index]
+                if _segments_intersect(
+                    first_start,
+                    first_end,
+                    second_start,
+                    second_end,
+                ):
+                    raise ValueError("boundary polygon must not self-intersect")
         area_twice = sum(
             start.north * end.east - end.north * start.east
-            for start, end in zip(vertices, vertices[1:] + vertices[:1])
+            for start, end in edges
         )
         if abs(area_twice) <= 1e-9:
             raise ValueError("boundary polygon must have nonzero area")
         object.__setattr__(self, "vertices", vertices)
+
+    @property
+    def edges(self) -> Tuple[Tuple[NEDPoint, NEDPoint], ...]:
+        return tuple(zip(self.vertices, self.vertices[1:] + self.vertices[:1]))
 
     def contains(self, north: float, east: float) -> bool:
         if not _finite(north) or not _finite(east):
@@ -74,6 +163,8 @@ class NavigableBoundaryNED:
         vertices = self.vertices
         previous = vertices[-1]
         for current in vertices:
+            if _point_segment_distance(north, east, previous, current) <= _GEOMETRY_EPSILON:
+                return False
             crosses = ((current.east > east) != (previous.east > east))
             if crosses:
                 boundary_north = (
@@ -94,10 +185,7 @@ class NavigableBoundaryNED:
             raise ValueError("point coordinates must be finite")
         return min(
             _point_segment_distance(north, east, start, end)
-            for start, end in zip(
-                self.vertices,
-                self.vertices[1:] + self.vertices[:1],
-            )
+            for start, end in self.edges
         )
 
     def contains_with_clearance(
@@ -110,20 +198,139 @@ class NavigableBoundaryNED:
             raise ValueError("clearance_m must be finite and nonnegative")
         return self.contains(north, east) and self.clearance_m(north, east) >= clearance_m
 
+    def segment_clearance_m(self, start: Pose2D, end: Pose2D) -> float:
+        """Return the exact minimum distance from a straight segment to the boundary."""
+
+        if not isinstance(start, Pose2D) or not isinstance(end, Pose2D):
+            raise TypeError("segment endpoints must be Pose2D values")
+        start_point = _pose_point(start)
+        end_point = _pose_point(end)
+        return min(
+            _segment_segment_distance(start_point, end_point, edge_start, edge_end)
+            for edge_start, edge_end in self.edges
+        )
+
+    def segment_with_clearance(
+        self,
+        start: Pose2D,
+        end: Pose2D,
+        clearance_m: float,
+    ) -> bool:
+        """Return whether an entire straight segment stays inside with clearance."""
+
+        if not _finite(clearance_m) or clearance_m < 0:
+            raise ValueError("clearance_m must be finite and nonnegative")
+        if not isinstance(start, Pose2D) or not isinstance(end, Pose2D):
+            raise TypeError("segment endpoints must be Pose2D values")
+        if not self.contains_with_clearance(start.x, start.y, clearance_m):
+            return False
+        if not self.contains_with_clearance(end.x, end.y, clearance_m):
+            return False
+        start_point = _pose_point(start)
+        end_point = _pose_point(end)
+        if any(
+            _segments_intersect(start_point, end_point, edge_start, edge_end)
+            for edge_start, edge_end in self.edges
+        ):
+            return False
+        return self.segment_clearance_m(start, end) + _GEOMETRY_EPSILON >= clearance_m
+
+
+@dataclass(frozen=True)
+class BoundaryPathValidation:
+    valid: bool
+    failed_segment_index: Optional[int]
+    minimum_clearance_m: Optional[float]
+    reason: str
+
+
+def validate_pose_path_to_boundary(
+    poses: Sequence[Pose2D],
+    boundary: NavigableBoundaryNED,
+    *,
+    min_boundary_clearance_m: float = 0.0,
+) -> BoundaryPathValidation:
+    """Validate every straight segment of a waypoint path against a polygon."""
+
+    if not isinstance(poses, (tuple, list)) or not poses:
+        raise ValueError("poses must be a nonempty sequence")
+    if not all(isinstance(pose, Pose2D) for pose in poses):
+        raise TypeError("poses must contain Pose2D values")
+    if not isinstance(boundary, NavigableBoundaryNED):
+        raise TypeError("boundary must be a NavigableBoundaryNED")
+    if not _finite(min_boundary_clearance_m) or min_boundary_clearance_m < 0:
+        raise ValueError("min_boundary_clearance_m must be finite and nonnegative")
+
+    if len(poses) == 1:
+        pose = poses[0]
+        clearance = boundary.clearance_m(pose.x, pose.y)
+        valid = boundary.contains_with_clearance(
+            pose.x,
+            pose.y,
+            min_boundary_clearance_m,
+        )
+        return BoundaryPathValidation(
+            valid=valid,
+            failed_segment_index=None if valid else 0,
+            minimum_clearance_m=clearance,
+            reason="single waypoint is safe" if valid else "waypoint is outside boundary or too close to shore",
+        )
+
+    minimum_clearance = math.inf
+    for index, (start, end) in enumerate(zip(poses, poses[1:])):
+        segment_clearance = boundary.segment_clearance_m(start, end)
+        minimum_clearance = min(minimum_clearance, segment_clearance)
+        if not boundary.segment_with_clearance(
+            start,
+            end,
+            min_boundary_clearance_m,
+        ):
+            return BoundaryPathValidation(
+                valid=False,
+                failed_segment_index=index,
+                minimum_clearance_m=segment_clearance,
+                reason=(
+                    f"segment {index} leaves the navigable boundary or passes "
+                    "too close to shore"
+                ),
+            )
+    return BoundaryPathValidation(
+        valid=True,
+        failed_segment_index=None,
+        minimum_clearance_m=minimum_clearance,
+        reason="all path segments are safely navigable",
+    )
+
+
+def validate_terminal_plan_to_boundary(
+    plan: PlanResult,
+    boundary: NavigableBoundaryNED,
+    *,
+    min_boundary_clearance_m: float = 0.0,
+) -> BoundaryPathValidation:
+    """Validate all straight connections in a successful terminal plan."""
+
+    if not isinstance(plan, PlanResult):
+        raise TypeError("plan must be a PlanResult")
+    if plan.status is not PlanStatus.SUCCESS or len(plan.waypoints) < 2:
+        raise ValueError("a successful plan with at least two waypoints is required")
+    return validate_pose_path_to_boundary(
+        plan.waypoints,
+        boundary,
+        min_boundary_clearance_m=min_boundary_clearance_m,
+    )
+
 
 @dataclass(frozen=True)
 class SearchBoundaryConfig:
     min_boundary_clearance_m: float = 1.0
     min_safe_arc_length_m: float = 4.0
-    approach_sample_spacing_m: float = 0.5
 
     def __post_init__(self) -> None:
         if not _finite(self.min_boundary_clearance_m) or self.min_boundary_clearance_m < 0:
             raise ValueError("min_boundary_clearance_m must be finite and nonnegative")
         if not _finite(self.min_safe_arc_length_m) or self.min_safe_arc_length_m <= 0:
             raise ValueError("min_safe_arc_length_m must be positive and finite")
-        if not _finite(self.approach_sample_spacing_m) or self.approach_sample_spacing_m <= 0:
-            raise ValueError("approach_sample_spacing_m must be positive and finite")
 
 
 @dataclass(frozen=True)
@@ -225,13 +432,15 @@ def constrain_search_plan_to_boundary(
     previous = staging
     safe_length = 0.0
     for waypoint in plan.arc_waypoints:
-        if not boundary.contains_with_clearance(
-            waypoint.x, waypoint.y, config.min_boundary_clearance_m
+        if not boundary.segment_with_clearance(
+            previous,
+            waypoint,
+            config.min_boundary_clearance_m,
         ):
             break
         safe_length += math.hypot(waypoint.x - previous.x, waypoint.y - previous.y)
         safe_waypoints.append(waypoint)
-        clearances.append(boundary.clearance_m(waypoint.x, waypoint.y))
+        clearances.append(boundary.segment_clearance_m(previous, waypoint))
         previous = waypoint
 
     rejected = len(plan.arc_waypoints) - len(safe_waypoints)
@@ -278,9 +487,9 @@ def plan_boundary_safe_circular_search(
 ) -> BoundaryCheckedSearchPlan:
     """Try both arc directions and return the longer safe continuous result.
 
-    The straight transition from the current pose to staging is sampled as
-    well.  This matters when the USV starts inside the search circle and must
-    travel outward before beginning the arc.
+    The entire straight transition from the current pose to staging is checked
+    as well.  This matters when the USV starts inside the search circle and
+    must travel outward before beginning the arc.
     """
 
     if not isinstance(current_pose, Pose2D):
@@ -321,37 +530,19 @@ def plan_boundary_safe_circular_search(
         )
         constrained = constrain_search_plan_to_boundary(raw_plan, boundary, boundary_config)
         if constrained.valid:
-            dx = raw_plan.staging_pose.x - current_pose.x
-            dy = raw_plan.staging_pose.y - current_pose.y
-            path_length = math.hypot(dx, dy)
-            sample_count = max(
-                1,
-                int(math.ceil(path_length / boundary_config.approach_sample_spacing_m)),
+            transition = validate_pose_path_to_boundary(
+                (current_pose, raw_plan.staging_pose),
+                boundary,
+                min_boundary_clearance_m=boundary_config.min_boundary_clearance_m,
             )
-            samples = tuple(
-                (
-                    current_pose.x + dx * index / sample_count,
-                    current_pose.y + dy * index / sample_count,
-                )
-                for index in range(sample_count + 1)
-            )
-            if not all(
-                boundary.contains_with_clearance(
-                    north,
-                    east,
-                    boundary_config.min_boundary_clearance_m,
-                )
-                for north, east in samples
-            ):
+            if not transition.valid:
                 constrained = BoundaryCheckedSearchPlan(
                     plan=None,
                     valid=False,
                     full_requested_arc_safe=False,
                     rejected_waypoint_count=len(raw_plan.arc_waypoints),
                     safe_arc_length_m=0.0,
-                    minimum_clearance_m=min(
-                        boundary.clearance_m(north, east) for north, east in samples
-                    ),
+                    minimum_clearance_m=transition.minimum_clearance_m,
                     reason=(
                         "current-to-staging transition leaves the navigable "
                         "boundary or passes too close to shore"
@@ -571,12 +762,121 @@ class DockAttemptSupervisor:
 class ExitAndReturnPlan:
     exit_goal: Pose2D
     return_goal: Pose2D
+    minimum_boundary_clearance_m: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class SafeReturnGoalConfig:
+    min_dock_distance_m: float
+    min_boundary_clearance_m: float = 1.0
+    grid_spacing_m: float = 0.5
+    max_grid_points: int = 100000
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("min_dock_distance_m", self.min_dock_distance_m),
+            ("grid_spacing_m", self.grid_spacing_m),
+        ):
+            if not _finite(value) or value <= 0:
+                raise ValueError(f"{name} must be positive and finite")
+        if (
+            not _finite(self.min_boundary_clearance_m)
+            or self.min_boundary_clearance_m < 0
+        ):
+            raise ValueError(
+                "min_boundary_clearance_m must be finite and nonnegative"
+            )
+        if (
+            isinstance(self.max_grid_points, bool)
+            or not isinstance(self.max_grid_points, int)
+            or self.max_grid_points <= 0
+        ):
+            raise ValueError("max_grid_points must be a positive integer")
+
+
+def select_safe_return_goal(
+    boundary: NavigableBoundaryNED,
+    dock_center: NEDPoint,
+    config: SafeReturnGoalConfig,
+    *,
+    preferred_goal: Optional[Pose2D] = None,
+) -> Pose2D:
+    """Select a deterministic safe waiting point inside a navigable polygon.
+
+    A safe preferred point is preserved.  Otherwise a bounded grid search
+    chooses the safe point nearest the preference, or the point farthest from
+    the dock when no preference is available.  Path safety is still checked
+    later by :func:`plan_exit_and_return`.
+    """
+
+    if not isinstance(boundary, NavigableBoundaryNED):
+        raise TypeError("boundary must be a NavigableBoundaryNED")
+    if not isinstance(dock_center, NEDPoint):
+        raise TypeError("dock_center must be a NEDPoint")
+    if not isinstance(config, SafeReturnGoalConfig):
+        raise TypeError("config must be a SafeReturnGoalConfig")
+    if preferred_goal is not None and not isinstance(preferred_goal, Pose2D):
+        raise TypeError("preferred_goal must be None or a Pose2D")
+
+    def safe(pose: Pose2D) -> bool:
+        return (
+            boundary.contains_with_clearance(
+                pose.x,
+                pose.y,
+                config.min_boundary_clearance_m,
+            )
+            and math.hypot(
+                pose.x - dock_center.north,
+                pose.y - dock_center.east,
+            ) >= config.min_dock_distance_m
+        )
+
+    if preferred_goal is not None and safe(preferred_goal):
+        return preferred_goal
+
+    min_north = min(point.north for point in boundary.vertices)
+    max_north = max(point.north for point in boundary.vertices)
+    min_east = min(point.east for point in boundary.vertices)
+    max_east = max(point.east for point in boundary.vertices)
+    north_count = int(math.ceil((max_north - min_north) / config.grid_spacing_m)) + 1
+    east_count = int(math.ceil((max_east - min_east) / config.grid_spacing_m)) + 1
+    if north_count * east_count > config.max_grid_points:
+        raise ValueError("return-goal grid exceeds max_grid_points; increase grid spacing")
+
+    candidates = []
+    for north_index in range(north_count):
+        north = min(min_north + north_index * config.grid_spacing_m, max_north)
+        for east_index in range(east_count):
+            east = min(min_east + east_index * config.grid_spacing_m, max_east)
+            yaw = math.atan2(dock_center.east - east, dock_center.north - north)
+            candidate = Pose2D(north, east, yaw)
+            if safe(candidate):
+                candidates.append(candidate)
+    if not candidates:
+        raise ValueError("no safe return goal exists for the configured clearances")
+
+    if preferred_goal is not None:
+        return min(
+            candidates,
+            key=lambda pose: (
+                math.hypot(pose.x - preferred_goal.x, pose.y - preferred_goal.y),
+                -boundary.clearance_m(pose.x, pose.y),
+            ),
+        )
+    return max(
+        candidates,
+        key=lambda pose: (
+            math.hypot(pose.x - dock_center.north, pose.y - dock_center.east),
+            boundary.clearance_m(pose.x, pose.y),
+        ),
+    )
 
 
 def plan_exit_and_return(
     entrance: PreciseEntrancePoseNED,
     return_goal: Pose2D,
     *,
+    current_pose: Optional[Pose2D] = None,
     exit_distance_m: float = 4.0,
     boundary: Optional[NavigableBoundaryNED] = None,
     min_boundary_clearance_m: float = 0.0,
@@ -587,6 +887,8 @@ def plan_exit_and_return(
         raise ValueError("a valid precise entrance pose is required")
     if not isinstance(return_goal, Pose2D):
         raise TypeError("return_goal must be a Pose2D")
+    if current_pose is not None and not isinstance(current_pose, Pose2D):
+        raise TypeError("current_pose must be None or a Pose2D")
     if not _finite(exit_distance_m) or exit_distance_m <= 0:
         raise ValueError("exit_distance_m must be positive and finite")
     if not _finite(min_boundary_clearance_m) or min_boundary_clearance_m < 0:
@@ -601,21 +903,34 @@ def plan_exit_and_return(
         entrance.y_ned - exit_distance_m * math.sin(entrance.heading_rad),
         outward_heading,
     )
+    minimum_clearance = None
     if boundary is not None:
-        if not boundary.contains_with_clearance(
-            exit_goal.x, exit_goal.y, min_boundary_clearance_m
-        ):
-            raise ValueError("exit goal is outside the navigable boundary")
-        if not boundary.contains_with_clearance(
-            return_goal.x, return_goal.y, min_boundary_clearance_m
-        ):
-            raise ValueError("return goal is outside the navigable boundary")
-    return ExitAndReturnPlan(exit_goal=exit_goal, return_goal=return_goal)
+        if not isinstance(boundary, NavigableBoundaryNED):
+            raise TypeError("boundary must be None or a NavigableBoundaryNED")
+        start = current_pose or Pose2D(
+            entrance.x_ned,
+            entrance.y_ned,
+            entrance.heading_rad,
+        )
+        validation = validate_pose_path_to_boundary(
+            (start, exit_goal, return_goal),
+            boundary,
+            min_boundary_clearance_m=min_boundary_clearance_m,
+        )
+        if not validation.valid:
+            raise ValueError(f"exit/return path is unsafe: {validation.reason}")
+        minimum_clearance = validation.minimum_clearance_m
+    return ExitAndReturnPlan(
+        exit_goal=exit_goal,
+        return_goal=return_goal,
+        minimum_boundary_clearance_m=minimum_clearance,
+    )
 
 
 __all__ = [
     "AdaptiveBoundarySearchPlan",
     "AdaptiveSearchRadiusConfig",
+    "BoundaryPathValidation",
     "BoundaryCheckedSearchPlan",
     "DockAttemptSupervisor",
     "DockRetryConfig",
@@ -623,9 +938,13 @@ __all__ = [
     "NavigableBoundaryNED",
     "RecoveryAction",
     "RecoveryDecision",
+    "SafeReturnGoalConfig",
     "SearchBoundaryConfig",
     "constrain_search_plan_to_boundary",
     "plan_boundary_safe_circular_search",
     "plan_adaptive_boundary_safe_circular_search",
     "plan_exit_and_return",
+    "select_safe_return_goal",
+    "validate_pose_path_to_boundary",
+    "validate_terminal_plan_to_boundary",
 ]

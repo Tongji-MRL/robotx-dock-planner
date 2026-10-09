@@ -11,6 +11,7 @@ from dock_planner import (
     DockEntranceObservationNED,
     DockPlanner,
     NEDPoint,
+    NavigableBoundaryNED,
     PlannerConfig,
     Pose2D,
     PlanStatus,
@@ -86,6 +87,96 @@ class Task3FlowTests(unittest.TestCase):
         self.manager.next_bay()
         self.assertEqual(self.manager.state, Task3FlowState.SEARCH_DOCK)
         self.assertIsNone(self.manager.plan)
+        self.manager.accept_entrance_observation(
+            self.entrance,
+            Pose2D(0, 0, 0),
+        )
+        self.assertEqual(self.manager.state, Task3FlowState.SEARCH_DOCK)
+        self.assertEqual(len(self.manager.bay_visit_records), 1)
+
+    def test_rejecting_all_three_bays_ends_search(self):
+        self.manager.begin(self.coarse)
+        self.manager.approach_reached()
+        for index, north in enumerate((9.0, 12.0, 15.0)):
+            self.manager.accept_entrance_observation(
+                DockEntranceObservationNED(
+                    north,
+                    20.0,
+                    math.pi / 2,
+                    0.9,
+                    11.0 + index,
+                    "mid360",
+                    dock_id="dock_1",
+                ),
+                Pose2D(0, 0, 0),
+            )
+            self.manager.accept_color_observation(
+                BayColorObservation("RED", 0.9, 12.0 + index, "mock_color")
+            )
+            if index < 2:
+                self.assertEqual(self.manager.state, Task3FlowState.NEXT_BAY)
+                self.manager.next_bay()
+        self.assertEqual(self.manager.state, Task3FlowState.ERROR)
+        self.assertIn("all expected dock bays", self.manager.error)
+
+    def test_terminal_failure_rejects_bay_and_resumes_search(self):
+        self.manager.begin(self.coarse)
+        self.manager.approach_reached()
+        self.manager.accept_entrance_observation(
+            self.entrance,
+            Pose2D(0, 0, 0),
+        )
+        self.manager.accept_color_observation(
+            BayColorObservation("GREEN", 0.95, 12.0, "mock_color")
+        )
+        self.assertEqual(self.manager.state, Task3FlowState.TERMINAL_DOCKING)
+        self.manager.terminal_docking_failed("alignment diverged")
+        self.assertEqual(self.manager.state, Task3FlowState.SEARCH_DOCK)
+        self.manager.accept_entrance_observation(
+            self.entrance,
+            Pose2D(0, 0, 0),
+        )
+        self.assertEqual(self.manager.state, Task3FlowState.SEARCH_DOCK)
+
+    def test_terminal_plan_crossing_concave_boundary_is_rejected(self):
+        boundary = NavigableBoundaryNED((
+            NEDPoint(0.0, -3.0, 0.0),
+            NEDPoint(2.0, -3.0, 0.0),
+            NEDPoint(2.0, 1.0, 0.0),
+            NEDPoint(3.0, 1.0, 0.0),
+            NEDPoint(3.0, -3.0, 0.0),
+            NEDPoint(8.0, -3.0, 0.0),
+            NEDPoint(8.0, 3.0, 0.0),
+            NEDPoint(0.0, 3.0, 0.0),
+        ))
+        manager = Task3FlowManager(
+            DockPlanner(PlannerConfig(4, 2)),
+            target_color="GREEN",
+            bay_width=3,
+            bay_depth=5,
+            planning_boundary=boundary,
+        )
+        manager.begin(self.coarse)
+        manager.approach_reached()
+        manager.accept_entrance_observation(
+            DockEntranceObservationNED(
+                4.0,
+                0.0,
+                0.0,
+                0.9,
+                11.0,
+                "mid360",
+                dock_id="dock_1",
+            ),
+            Pose2D(1.0, 0.0, 0.0),
+        )
+        plan = manager.accept_color_observation(
+            BayColorObservation("GREEN", 0.95, 12.0, "mock_color")
+        )
+        self.assertEqual(plan.status, PlanStatus.SUCCESS)
+        self.assertEqual(manager.state, Task3FlowState.ERROR)
+        self.assertFalse(manager.terminal_boundary_validation.valid)
+        self.assertIn("boundary", manager.error)
 
     def test_invalid_input_enters_error_without_point_cloud_processing(self):
         self.manager.begin(CoarseDockInfo(
@@ -93,6 +184,44 @@ class Task3FlowTests(unittest.TestCase):
         ))
         self.assertEqual(self.manager.state, Task3FlowState.ERROR)
         self.assertIn("coarse dock", self.manager.error)
+
+    def test_low_confidence_entrance_and_color_do_not_advance_flow(self):
+        self.manager.begin(self.coarse)
+        self.manager.approach_reached()
+        self.manager.accept_entrance_observation(
+            DockEntranceObservationNED(
+                9.0,
+                20.0,
+                math.pi / 2,
+                0.19,
+                11.0,
+                "mid360",
+                dock_id="dock_1",
+            ),
+            Pose2D(0, 0, 0),
+        )
+        self.assertEqual(self.manager.state, Task3FlowState.SEARCH_DOCK)
+        self.assertEqual(self.manager.bay_visit_records, ())
+
+        self.manager.accept_entrance_observation(
+            self.entrance,
+            Pose2D(0, 0, 0),
+        )
+        self.assertEqual(self.manager.state, Task3FlowState.CHECK_BAY_COLOR)
+        self.assertIsNone(self.manager.accept_color_observation(
+            BayColorObservation("GREEN", 0.49, 12.0, "mock_color")
+        ))
+        self.assertEqual(self.manager.state, Task3FlowState.CHECK_BAY_COLOR)
+
+    def test_confidence_thresholds_are_validated(self):
+        with self.assertRaises(ValueError):
+            Task3FlowManager(
+                DockPlanner(PlannerConfig(4, 2)),
+                target_color="GREEN",
+                bay_width=3,
+                bay_depth=5,
+                min_entrance_confidence=1.1,
+            )
 
     def test_center_only_flow_advances_along_arc_and_stops_on_entrance(self):
         center_only = CoarseDockCenterObservationNED(

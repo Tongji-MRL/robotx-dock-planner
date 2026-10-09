@@ -55,6 +55,7 @@ result = planner.plan(
 - `dock_planner/task3_flow.py`：不依赖 ROS 的搜索、颜色判定和终端规划流程骨架。
 - `dock_planner/dock_perception.py`：离线 NumPy 感知原型和 synthetic mock；当前不接 ROS。
 - `dock_planner/color_sequence.py`：颜色序列通信契约；不依赖 ROS。
+- `dock_planner/bay_search.py`：入口中心关联、bay 去重、颜色拒绝和 terminal 失败记忆。
 - `dock_planner/__init__.py`：公开导入接口。
 - `TASK3_ABNORMAL_SCENARIOS.md`：任务前、中、后 158 项异常场景、当前覆盖状态和处置方案。
 - `TASK3_READINESS_CHECKLIST.md`：从离线逻辑到比赛级闭环的完成度清单。
@@ -216,7 +217,7 @@ result = planner.plan(current_pose_ned, request.dock, obstacles=request.obstacle
 - `plan_adaptive_boundary_safe_circular_search()` 先使用原始安全半径；只有两个方向都没有
   足够长的安全圆弧时，才按配置减小 stand-off 后重新检查。它不会缩小 dock 尺寸和
   船体包络、尺寸余量、粗定位误差，也不会越过人工配置的最小 stand-off；当前位置到
-  staging 的直线路段也会按间距采样检查，覆盖船一开始位于搜索圆内、需要向外退出的情况；
+  staging 的完整直线路段也会做精确几何检查，覆盖船一开始位于搜索圆内、需要向外退出的情况；
 - `DockAttemptSupervisor` 同时限制单次尝试时间、总时间和最大尝试次数；
 - 达到限制后返回 `EXIT_AND_RETURN`，`plan_exit_and_return()` 生成 dock 外退出目标和
   另行配置的岸边等待目标。真实场地的边界和等待点必须由任务配置提供。
@@ -255,8 +256,16 @@ data:  [tin_color, circle_color]
 
 [`TASK3_ABNORMAL_SCENARIOS.md`](TASK3_ABNORMAL_SCENARIOS.md) 将任务前、粗定位与接近、
 LiDAR 搜索、颜色与终端靠泊、喷水、返航和系统级故障拆成 158 项。每一项明确标为
-已覆盖、部分覆盖或未覆盖，并给出默认安全动作和下一步。当前统计为 45 项已覆盖、
-35 项部分覆盖、78 项未覆盖；其中 65 项未覆盖问题属于实船自主控制前必须处理的 P0。
+已覆盖、部分覆盖或未覆盖，并给出默认安全动作和下一步。当前统计为 52 项已覆盖、
+33 项部分覆盖、73 项未覆盖；其中 62 项未覆盖问题属于实船自主控制前必须处理的 P0。
+
+规划安全层现在检查 waypoint 之间的完整线段，而不只检查端点。approach、搜索圆弧、
+terminal、退出和返航均可复用相同的多边形求交与净距逻辑；自交或重复顶点的边界会被
+拒绝。`BayVisitTracker` 用入口中心距离关联 bay，避免重复检查已拒绝或 terminal 失败的
+入口，并在三个预期 bay 全部不可用时结束搜索。
+`select_safe_return_goal()` 会优先保留人工配置且安全的等待点；首选点不满足边界净距或
+dock 最小距离时，才在边界内确定性选择最近的安全替代点。
+Task3 flow 还提供独立的入口和 bay 颜色最低置信度门；低于门限的结果不会触发状态前进。
 
 `pointcloud_adapter.py` 按实际 Mid-360 PointCloud2 字段布局提取 x/y/z，不要求
 intensity、tag、line、timestamp 与 XYZ 使用相同 datatype。它支持有限值过滤和质量

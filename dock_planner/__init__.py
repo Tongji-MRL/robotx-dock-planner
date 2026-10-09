@@ -35,11 +35,15 @@ from .watering import (
 )
 from .mission_safety import (
     AdaptiveBoundarySearchPlan, AdaptiveSearchRadiusConfig,
-    BoundaryCheckedSearchPlan, DockAttemptSupervisor, DockRetryConfig,
+    BoundaryCheckedSearchPlan, BoundaryPathValidation,
+    DockAttemptSupervisor, DockRetryConfig,
     ExitAndReturnPlan, NavigableBoundaryNED, RecoveryAction, RecoveryDecision,
+    SafeReturnGoalConfig,
     SearchBoundaryConfig, constrain_search_plan_to_boundary,
     plan_adaptive_boundary_safe_circular_search,
     plan_boundary_safe_circular_search, plan_exit_and_return,
+    select_safe_return_goal,
+    validate_pose_path_to_boundary, validate_terminal_plan_to_boundary,
 )
 from .goto_adapter import (
     GotoReferenceSample, GotoStatus, GotoStatusKind, GotoTargetENU,
@@ -62,6 +66,10 @@ from .ned_map_adapter import (
 from .color_sequence import (
     COLOR_SEQUENCE_MESSAGE_TYPE, COLOR_SEQUENCE_TOPIC, ColorCode,
     ColorSequenceVector, decode_color_sequence,
+)
+from .bay_search import (
+    BayCandidateAction, BayCandidateDecision, BayDisposition,
+    BayVisitConfig, BayVisitRecord, BayVisitTracker,
 )
 
 __all__ = [
@@ -90,12 +98,15 @@ __all__ = [
     "WateringCompletionTracker", "WateringVerificationConfig",
     "WateringVerificationResult", "WateringVerificationState",
     "AdaptiveBoundarySearchPlan", "AdaptiveSearchRadiusConfig",
-    "BoundaryCheckedSearchPlan", "DockAttemptSupervisor", "DockRetryConfig",
+    "BoundaryCheckedSearchPlan", "BoundaryPathValidation",
+    "DockAttemptSupervisor", "DockRetryConfig",
     "ExitAndReturnPlan", "NavigableBoundaryNED", "RecoveryAction",
-    "RecoveryDecision", "SearchBoundaryConfig",
+    "RecoveryDecision", "SafeReturnGoalConfig", "SearchBoundaryConfig",
     "constrain_search_plan_to_boundary", "plan_adaptive_boundary_safe_circular_search",
     "plan_boundary_safe_circular_search",
     "plan_exit_and_return",
+    "select_safe_return_goal",
+    "validate_pose_path_to_boundary", "validate_terminal_plan_to_boundary",
     "GotoReferenceSample", "GotoStatus", "GotoStatusKind", "GotoTargetENU",
     "ned_goal_to_goto_enu", "parse_goto_status",
     "MotionCommandArbiter", "MotionCommandArbiterConfig",
@@ -108,4 +119,6 @@ __all__ = [
     "uav_origin_in_usv_ned",
     "COLOR_SEQUENCE_TOPIC", "COLOR_SEQUENCE_MESSAGE_TYPE", "ColorCode",
     "ColorSequenceVector", "decode_color_sequence",
+    "BayCandidateAction", "BayCandidateDecision", "BayDisposition",
+    "BayVisitConfig", "BayVisitRecord", "BayVisitTracker",
 ]

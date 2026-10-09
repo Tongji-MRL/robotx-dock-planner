@@ -6,6 +6,7 @@ PX4.  Those responsibilities remain at adapters around this flow.
 """
 
 from enum import Enum
+import math
 from typing import Optional
 
 from .integration import (
@@ -29,7 +30,18 @@ from .dock_search import (
     CircularDockSearchPlan,
     plan_circular_dock_search,
 )
+from .bay_search import (
+    BayCandidateAction,
+    BayVisitConfig,
+    BayVisitRecord,
+    BayVisitTracker,
+)
 from .planner import DockPlanner
+from .mission_safety import (
+    BoundaryPathValidation,
+    NavigableBoundaryNED,
+    validate_terminal_plan_to_boundary,
+)
 from .types import PlanResult, PlanStatus, Pose2D
 
 
@@ -57,6 +69,11 @@ class Task3FlowManager:
         bay_width: float,
         bay_depth: float,
         freshness: DataFreshnessConfig = DataFreshnessConfig(),
+        planning_boundary: Optional[NavigableBoundaryNED] = None,
+        min_boundary_clearance_m: float = 0.0,
+        bay_visit_config: BayVisitConfig = BayVisitConfig(),
+        min_entrance_confidence: float = 0.20,
+        min_bay_color_confidence: float = 0.50,
     ) -> None:
         if not isinstance(planner, DockPlanner):
             raise TypeError("planner must be a DockPlanner")
@@ -68,7 +85,36 @@ class Task3FlowManager:
         self._bay_depth = bay_depth
         if not isinstance(freshness, DataFreshnessConfig):
             raise TypeError("freshness must be a DataFreshnessConfig")
+        if planning_boundary is not None and not isinstance(
+            planning_boundary, NavigableBoundaryNED
+        ):
+            raise TypeError("planning_boundary must be None or NavigableBoundaryNED")
+        if (
+            isinstance(min_boundary_clearance_m, bool)
+            or not isinstance(min_boundary_clearance_m, (int, float))
+            or not math.isfinite(min_boundary_clearance_m)
+            or min_boundary_clearance_m < 0
+        ):
+            raise ValueError("min_boundary_clearance_m must be finite and nonnegative")
+        if not isinstance(bay_visit_config, BayVisitConfig):
+            raise TypeError("bay_visit_config must be a BayVisitConfig")
+        for name, value in (
+            ("min_entrance_confidence", min_entrance_confidence),
+            ("min_bay_color_confidence", min_bay_color_confidence),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or not 0 <= value <= 1
+            ):
+                raise ValueError(f"{name} must be finite and in [0, 1]")
         self._freshness = freshness
+        self._planning_boundary = planning_boundary
+        self._min_boundary_clearance_m = float(min_boundary_clearance_m)
+        self._bay_tracker = BayVisitTracker(bay_visit_config)
+        self._min_entrance_confidence = float(min_entrance_confidence)
+        self._min_bay_color_confidence = float(min_bay_color_confidence)
         self._state = Task3FlowState.IDLE
         self._coarse_dock: Optional[CoarseDockObservation] = None
         self._search_plan: Optional[CircularDockSearchPlan] = None
@@ -79,7 +125,9 @@ class Task3FlowManager:
         self._current_pose: Optional[Pose2D] = None
         self._terminal_input: Optional[TerminalPlanInput] = None
         self._plan: Optional[PlanResult] = None
+        self._terminal_boundary_validation: Optional[BoundaryPathValidation] = None
         self._error: Optional[str] = None
+        self._active_bay_index: Optional[int] = None
 
     @property
     def state(self) -> Task3FlowState:
@@ -98,8 +146,16 @@ class Task3FlowManager:
         return self._terminal_input
 
     @property
+    def terminal_boundary_validation(self) -> Optional[BoundaryPathValidation]:
+        return self._terminal_boundary_validation
+
+    @property
     def error(self) -> Optional[str]:
         return self._error
+
+    @property
+    def bay_visit_records(self) -> tuple[BayVisitRecord, ...]:
+        return self._bay_tracker.records
 
     @property
     def search_plan(self) -> Optional[CircularDockSearchPlan]:
@@ -135,10 +191,13 @@ class Task3FlowManager:
         self._precise_entrance = None
         self._terminal_input = None
         self._plan = None
+        self._terminal_boundary_validation = None
         self._search_plan = None
         self._coarse_circle_position = None
         self._search_waypoint_index = 0
         self._error = None
+        self._active_bay_index = None
+        self._bay_tracker.reset()
         self._state = Task3FlowState.APPROACH_DOCK
 
     def begin_center_search(
@@ -217,6 +276,15 @@ class Task3FlowManager:
         ):
             self.fail("entrance observation is stale")
             return
+        if observation.confidence < self._min_entrance_confidence:
+            return
+        decision = self._bay_tracker.observe(observation)
+        if decision.action is BayCandidateAction.SEARCH_EXHAUSTED:
+            self.fail("all expected dock bays have been exhausted")
+            return
+        if decision.action is BayCandidateAction.SKIP:
+            return
+        self._active_bay_index = decision.bay_index
         self._entrance_observation = observation
         self._current_pose = current_pose
         self._state = Task3FlowState.CHECK_BAY_COLOR
@@ -251,13 +319,19 @@ class Task3FlowManager:
         candidates = [
             observation for observation in result.entrance_observations
             if observation.valid
+            and observation.confidence >= self._min_entrance_confidence
             and observation.dock_id in (None, result.dock_id)
             and (now is None or observation.is_fresh_at(now, self._freshness.perception_timeout_s))
         ]
         if not candidates:
             return False
-        self.accept_entrance_observation(candidates[0], current_pose, now=now)
-        return self._state == Task3FlowState.CHECK_BAY_COLOR
+        for candidate in candidates:
+            self.accept_entrance_observation(candidate, current_pose, now=now)
+            if self._state is Task3FlowState.CHECK_BAY_COLOR:
+                return True
+            if self._state is Task3FlowState.ERROR:
+                return False
+        return False
 
     def accept_color_observation(
         self,
@@ -267,6 +341,8 @@ class Task3FlowManager:
     ) -> Optional[PlanResult]:
         self._require(Task3FlowState.CHECK_BAY_COLOR)
         if not isinstance(observation, BayColorObservation) or not observation.valid:
+            return None
+        if observation.confidence < self._min_bay_color_confidence:
             return None
         if now is not None and not observation.is_fresh_at(
             now, self._freshness.perception_timeout_s
@@ -279,6 +355,13 @@ class Task3FlowManager:
             self.fail("entrance observation expired before color decision")
             return None
         if observation.color.strip().upper() != self._target_color:
+            if self._active_bay_index is None:
+                self.fail("selected entrance has no active bay record")
+                return None
+            decision = self._bay_tracker.mark_color_rejected(self._active_bay_index)
+            if decision.action is BayCandidateAction.SEARCH_EXHAUSTED:
+                self.fail("all expected dock bays have been rejected or failed")
+                return None
             self._state = Task3FlowState.NEXT_BAY
             return None
         if self._coarse_dock is None or self._entrance_observation is None or self._current_pose is None:
@@ -300,8 +383,24 @@ class Task3FlowManager:
             obstacles=self._terminal_input.obstacles,
         )
         if self._plan.status != PlanStatus.SUCCESS:
+            if self._active_bay_index is not None:
+                self._bay_tracker.mark_terminal_failure(self._active_bay_index)
             self.fail(f"terminal plan failed: {self._plan.reason}")
             return self._plan
+        if self._planning_boundary is not None:
+            self._terminal_boundary_validation = validate_terminal_plan_to_boundary(
+                self._plan,
+                self._planning_boundary,
+                min_boundary_clearance_m=self._min_boundary_clearance_m,
+            )
+            if not self._terminal_boundary_validation.valid:
+                if self._active_bay_index is not None:
+                    self._bay_tracker.mark_terminal_failure(self._active_bay_index)
+                self.fail(
+                    "terminal plan leaves the navigable boundary: "
+                    f"{self._terminal_boundary_validation.reason}"
+                )
+                return self._plan
         self._state = Task3FlowState.TERMINAL_DOCKING
         return self._plan
 
@@ -310,11 +409,35 @@ class Task3FlowManager:
         self._require(Task3FlowState.NEXT_BAY)
         self._entrance_observation = None
         self._current_pose = None
+        self._active_bay_index = None
         self._state = Task3FlowState.SEARCH_DOCK
 
     def docking_complete(self) -> None:
         self._require(Task3FlowState.TERMINAL_DOCKING)
+        if self._active_bay_index is not None:
+            self._bay_tracker.mark_completed(self._active_bay_index)
         self._state = Task3FlowState.DOCKED
+
+    def terminal_docking_failed(self, reason: str) -> None:
+        """Reject the active bay after an execution failure and resume search."""
+
+        self._require(Task3FlowState.TERMINAL_DOCKING)
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("reason must be a nonempty string")
+        if self._active_bay_index is None:
+            self.fail("terminal failure has no active bay record")
+            return
+        decision = self._bay_tracker.mark_terminal_failure(self._active_bay_index)
+        self._entrance_observation = None
+        self._precise_entrance = None
+        self._terminal_input = None
+        self._plan = None
+        self._terminal_boundary_validation = None
+        self._active_bay_index = None
+        if decision.action is BayCandidateAction.SEARCH_EXHAUSTED:
+            self.fail(f"all expected dock bays have been exhausted: {reason.strip()}")
+            return
+        self._state = Task3FlowState.SEARCH_DOCK
 
     def docked_confirmed(self) -> None:
         self._require(Task3FlowState.DOCKED)

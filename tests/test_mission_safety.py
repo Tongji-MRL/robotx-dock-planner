@@ -4,20 +4,29 @@ import unittest
 
 from dock_planner import (
     AdaptiveSearchRadiusConfig,
+    BoundaryPathValidation,
     CircularDockSearchConfig,
+    CircularDockSearchPlan,
     CoarseDockCenterObservationNED,
     CoarseDockSearchConfig,
     DockAttemptSupervisor,
     DockRetryConfig,
     NEDPoint,
     NavigableBoundaryNED,
+    PlanResult,
+    PlanStatus,
     Pose2D,
     PreciseEntrancePoseNED,
     RecoveryAction,
+    SafeReturnGoalConfig,
     SearchBoundaryConfig,
+    constrain_search_plan_to_boundary,
     plan_adaptive_boundary_safe_circular_search,
     plan_boundary_safe_circular_search,
     plan_exit_and_return,
+    select_safe_return_goal,
+    validate_pose_path_to_boundary,
+    validate_terminal_plan_to_boundary,
 )
 
 
@@ -27,6 +36,19 @@ def rectangle(min_north, max_north, min_east, max_east):
         NEDPoint(max_north, min_east, 0.0),
         NEDPoint(max_north, max_east, 0.0),
         NEDPoint(min_north, max_east, 0.0),
+    ))
+
+
+def boundary_with_notch():
+    return NavigableBoundaryNED((
+        NEDPoint(0.0, -3.0, 0.0),
+        NEDPoint(2.0, -3.0, 0.0),
+        NEDPoint(2.0, 1.0, 0.0),
+        NEDPoint(3.0, 1.0, 0.0),
+        NEDPoint(3.0, -3.0, 0.0),
+        NEDPoint(6.0, -3.0, 0.0),
+        NEDPoint(6.0, 3.0, 0.0),
+        NEDPoint(0.0, 3.0, 0.0),
     ))
 
 
@@ -96,23 +118,34 @@ class SearchBoundaryTests(unittest.TestCase):
         self.assertFalse(result.valid)
         self.assertIsNone(result.plan)
 
+    def test_self_intersecting_boundary_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "self-intersect"):
+            NavigableBoundaryNED((
+                NEDPoint(0.0, 0.0, 0.0),
+                NEDPoint(2.0, 2.0, 0.0),
+                NEDPoint(0.0, 2.0, 0.0),
+                NEDPoint(2.0, 0.0, 0.0),
+            ))
+
+    def test_segment_rejects_concave_notch_between_safe_endpoints(self):
+        boundary = boundary_with_notch()
+        start = Pose2D(1.0, 0.0, 0.0)
+        end = Pose2D(4.0, 0.0, 0.0)
+        self.assertTrue(boundary.contains(start.x, start.y))
+        self.assertTrue(boundary.contains(end.x, end.y))
+        self.assertFalse(boundary.segment_with_clearance(start, end, 0.0))
+        validation = validate_pose_path_to_boundary((start, end), boundary)
+        self.assertIsInstance(validation, BoundaryPathValidation)
+        self.assertFalse(validation.valid)
+        self.assertEqual(validation.failed_segment_index, 0)
+
     def test_inside_circle_outward_transition_must_remain_in_boundary(self):
-        boundary_with_notch = NavigableBoundaryNED((
-            NEDPoint(0.0, -3.0, 0.0),
-            NEDPoint(2.0, -3.0, 0.0),
-            NEDPoint(2.0, 1.0, 0.0),
-            NEDPoint(3.0, 1.0, 0.0),
-            NEDPoint(3.0, -3.0, 0.0),
-            NEDPoint(6.0, -3.0, 0.0),
-            NEDPoint(6.0, 3.0, 0.0),
-            NEDPoint(0.0, 3.0, 0.0),
-        ))
         result = plan_boundary_safe_circular_search(
             Pose2D(1.0, 0.0, 0.0),
             CoarseDockCenterObservationNED(
                 "dock_mock", NEDPoint(0.0, 0.0, 0.0), 10.0, True,
             ),
-            boundary_with_notch,
+            boundary_with_notch(),
             approach_config=CoarseDockSearchConfig(
                 dock_length_m=1.0,
                 dock_width_m=1.0,
@@ -128,11 +161,52 @@ class SearchBoundaryTests(unittest.TestCase):
             boundary_config=SearchBoundaryConfig(
                 min_boundary_clearance_m=0.05,
                 min_safe_arc_length_m=0.5,
-                approach_sample_spacing_m=0.1,
             ),
         )
         self.assertFalse(result.valid)
         self.assertIn("current-to-staging transition", result.reason)
+
+    def test_search_arc_rejects_unsafe_chord_between_safe_waypoints(self):
+        boundary = boundary_with_notch()
+        raw = CircularDockSearchPlan(
+            dock_id="dock_mock",
+            center_ned=NEDPoint(0.0, 0.0, 0.0),
+            radius_m=4.0,
+            staging_pose=Pose2D(1.0, 0.0, 0.0),
+            arc_waypoints=(Pose2D(4.0, 0.0, 0.0),),
+            clockwise=True,
+            arc_span_rad=0.5,
+        )
+        result = constrain_search_plan_to_boundary(
+            raw,
+            boundary,
+            SearchBoundaryConfig(
+                min_boundary_clearance_m=0.0,
+                min_safe_arc_length_m=0.5,
+            ),
+        )
+        self.assertFalse(result.valid)
+        self.assertEqual(result.safe_arc_length_m, 0.0)
+
+    def test_terminal_plan_checks_every_segment(self):
+        safe = PlanResult(
+            Pose2D(1.0, 2.0, 0.0),
+            waypoints=(Pose2D(1.0, 2.0, 0.0), Pose2D(4.0, 2.0, 0.0)),
+            status=PlanStatus.SUCCESS,
+        )
+        unsafe = PlanResult(
+            Pose2D(1.0, 0.0, 0.0),
+            waypoints=(Pose2D(1.0, 0.0, 0.0), Pose2D(4.0, 0.0, 0.0)),
+            status=PlanStatus.SUCCESS,
+        )
+        self.assertTrue(validate_terminal_plan_to_boundary(
+            safe,
+            boundary_with_notch(),
+        ).valid)
+        self.assertFalse(validate_terminal_plan_to_boundary(
+            unsafe,
+            boundary_with_notch(),
+        ).valid)
 
     def test_random_rectangular_fields_never_return_unsafe_waypoints(self):
         rng = random.Random(42)
@@ -284,6 +358,70 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(plan.exit_goal.y, 3.0)
         self.assertAlmostEqual(abs(plan.exit_goal.yaw), math.pi)
         self.assertEqual(plan.return_goal, wait_goal)
+        self.assertIsNotNone(plan.minimum_boundary_clearance_m)
+
+    def test_exit_plan_rejects_safe_endpoints_connected_through_shore(self):
+        entrance = PreciseEntrancePoseNED(
+            x_ned=1.0,
+            y_ned=0.0,
+            heading_rad=math.pi,
+            timestamp=10.0,
+            valid=True,
+        )
+        with self.assertRaisesRegex(ValueError, "exit/return path is unsafe"):
+            plan_exit_and_return(
+                entrance,
+                Pose2D(5.0, 0.0, 0.0),
+                current_pose=Pose2D(1.0, 0.0, math.pi),
+                exit_distance_m=3.0,
+                boundary=boundary_with_notch(),
+            )
+
+    def test_safe_return_goal_preserves_safe_preference_or_repairs_it(self):
+        boundary = rectangle(-10.0, 10.0, -10.0, 10.0)
+        config = SafeReturnGoalConfig(
+            min_dock_distance_m=4.0,
+            min_boundary_clearance_m=1.0,
+            grid_spacing_m=1.0,
+        )
+        preferred = Pose2D(-7.0, 5.0, 0.3)
+        self.assertEqual(
+            select_safe_return_goal(
+                boundary,
+                NEDPoint(0.0, 0.0, 0.0),
+                config,
+                preferred_goal=preferred,
+            ),
+            preferred,
+        )
+        repaired = select_safe_return_goal(
+            boundary,
+            NEDPoint(0.0, 0.0, 0.0),
+            config,
+            preferred_goal=Pose2D(0.0, 0.0, 0.0),
+        )
+        self.assertTrue(boundary.contains_with_clearance(repaired.x, repaired.y, 1.0))
+        self.assertGreaterEqual(math.hypot(repaired.x, repaired.y), 4.0)
+
+    def test_safe_return_goal_allows_zero_boundary_clearance(self):
+        config = SafeReturnGoalConfig(
+            min_dock_distance_m=2.0,
+            min_boundary_clearance_m=0.0,
+        )
+
+        self.assertEqual(config.min_boundary_clearance_m, 0.0)
+
+    def test_safe_return_goal_rejects_impossible_field(self):
+        with self.assertRaisesRegex(ValueError, "no safe return goal"):
+            select_safe_return_goal(
+                rectangle(-1.0, 1.0, -1.0, 1.0),
+                NEDPoint(0.0, 0.0, 0.0),
+                SafeReturnGoalConfig(
+                    min_dock_distance_m=10.0,
+                    min_boundary_clearance_m=0.1,
+                    grid_spacing_m=0.25,
+                ),
+            )
 
 
 if __name__ == "__main__":

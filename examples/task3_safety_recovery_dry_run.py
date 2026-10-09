@@ -14,8 +14,10 @@ from dock_planner import (
     Pose2D,
     PreciseEntrancePoseNED,
     SearchBoundaryConfig,
+    SafeReturnGoalConfig,
     plan_boundary_safe_circular_search,
     plan_exit_and_return,
+    select_safe_return_goal,
 )
 
 
@@ -78,10 +80,20 @@ def main() -> None:
     entrance = PreciseEntrancePoseNED(
         0.0, 0.0, 0.0, 205.0, True, dock_id="dock_random_mock"
     )
-    return_goal = Pose2D(
+    preferred_return_goal = Pose2D(
         rng.uniform(-12.0, -9.0),
         rng.uniform(-5.0, 5.0),
         0.0,
+    )
+    return_goal = select_safe_return_goal(
+        boundary,
+        coarse.center_ned,
+        SafeReturnGoalConfig(
+            min_dock_distance_m=8.0,
+            min_boundary_clearance_m=1.0,
+            grid_spacing_m=0.5,
+        ),
+        preferred_goal=preferred_return_goal,
     )
     recovery = plan_exit_and_return(
         entrance,

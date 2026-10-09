@@ -8,7 +8,7 @@
 | 优先级 | 完成 | 项目 | 当前证据 | 剩余工作 / 所需输入 |
 |---|---:|---|---|---|
 | P0 | [x] | 任务全流程确认 | 粗定位、局部搜索、bay 检查、最终靠泊、喷水和颜色序列流程已整理 | Handbook 更新时同步检查 |
-| P0 | [x] | 异常场景系统审计 | `TASK3_ABNORMAL_SCENARIOS.md` 已按任务前中后审计 158 项：45 已覆盖、35 部分覆盖、78 未覆盖 | 按矩阵优先补齐 65 个未覆盖 P0；相似项由统一 safety/watchdog/fault manager 合并解决 |
+| P0 | [x] | 异常场景系统审计 | `TASK3_ABNORMAL_SCENARIOS.md` 已按任务前中后审计 158 项：52 已覆盖、33 部分覆盖、73 未覆盖 | 按矩阵继续补齐 62 个未覆盖 P0；相似项由统一 safety/watchdog/fault manager 合并解决 |
 | P0 | [x] | DockPlanner 最终靠泊几何 | approach、align、entrance、stop 基线测试通过 | 仍需通过适配器交给实船控制器执行 |
 | P0 | [x] | UAV 粗中心接口 | 已有 `CoarseDockCenterObservationNED` 和数据时效检查 | Orin ROS adapter 需要读取真实 semantic map 消息 |
 | P0 | [x] | UAV-NED 转 USV-NED 纯转换 | 已按 PDF 的 WGS84/ECEF/NED 公式实现；semantic map 可输出现有 coarse dock 中心接口；已确认两套 NED 轴共向 | 当前只需固定平移，无需 yaw 旋转 |
@@ -16,6 +16,10 @@
 | P0 | [x] | 中心点到 staging/搜索圆弧 | 安全半径已包含 dock、船体包络、粗测余量、粗定位误差与 stand-off；可区分圆外、圆周、圆内、最小包络内和中心重合；圆内生成径向外退目标 | 最小包络内的真实运动必须由 Mid-360 确认局部净空后再交给 goto |
 | P0 | [ ] | USV `base_link` 与船体外形 | 水平参考点为中央小盖板几何中心；图纸和粗测得到前 0.820 m、后 0.370 m、左右各 0.405 m；暂定二维包络半径 0.92 m，另留 0.10 m 粗测余量；详见 `USV_BASELINK说明.md` | 确认 Z 基准并统一飞控、GPS、LiDAR 外参；低速水测后再调整误差余量 |
 | P0 | [x] | 不同场地可航边界判断 | 同时检查顺/逆时针；切除不安全圆弧；两边均失败时可在明确的最小 stand-off 以上逐级缩小半径；圆内向外到 staging 的路径也检查；随机场地测试通过 | 现场换成真实可航行边界，并根据船体尺寸确定最小 stand-off；接入 executor 前仍不可视为实船闭环 |
+| P0 | [x] | 全路径连续边界检查 | approach、搜索圆弧 chord、terminal、退出和返航每段均做多边形求交与最小净距检查；自交边界被拒绝 | 动态障碍和 dock 实体仍需独立障碍层 |
+| P1 | [x] | Bay 去重和失败记忆 | 入口中心距离关联；颜色拒绝或 terminal 失败后跳过；三个 bay 全部不可用时结束搜索 | 用真实入口数据标定关联距离，并接 executor 失败事件 |
+| P1 | [x] | 入口与颜色置信度门 | flow 分别配置最低 entrance confidence 和 bay color confidence；低于门限保持观察，不进入靠泊 | 用真实数据标定两个门限 |
+| P1 | [x] | 安全返航等待点选择 | 合法首选点保持不变；不安全首选点可在场地边界内按岸边净距和 dock 最小距离确定性修复 | 每个正式场地仍需人工给出首选等待区域 |
 | P0 | [x] | ArduPilot 官方 ROS2 目标接口审计 | 官方 DDS 使用 `/ap/cmd_gps_pose`；局部位置反馈为 ENU | Task3 内部继续使用 NED，所有转换放在 adapter |
 | P0 | [x] | 团队单点 goto 接口确认 | `/safe_passage/goto/target` 接收 `PointStamped`；status 输出 DONE/ABORTED | 源码存在，但尚无实船运行证据 |
 | P0 | [x] | Task3 到 goto 的纯坐标转换 | 使用同步的当前 NED 和 odom 数据，无需共用原点即可将 NED 目标转为 ENU；支持状态解析 | 使用真实 topic 验证轴向和时间同步 |
@@ -52,7 +56,7 @@
 
 ## 当前本地验证
 
-- 完整 pytest：`154 passed`。
+- 完整 pytest：`172 passed`。
 - 独立 LiDAR prototype：`18 tests passed`；200 组随机 synthetic 场景严格成功率 98.5%，
   32 个仿真视角中 5 个可见入口视角全部选对最高候选，覆盖 3 个 bay。
 - 真实 Mid-360 bag 抽帧：已验证 `livox_frame`、混合字段解析和全零点过滤。
