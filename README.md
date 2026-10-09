@@ -275,8 +275,14 @@ Task3 flow 还提供独立的入口和 bay 颜色最低置信度门；低于门�
 
 `pointcloud_adapter.py` 按实际 Mid-360 PointCloud2 字段布局提取 x/y/z，不要求
 intensity、tag、line、timestamp 与 XYZ 使用相同 datatype。它支持有限值过滤和质量
-统计；默认还会去掉 Mid-360 原始数据中的 `(0,0,0)` 占位点。它不执行
-`livox_frame → base_link/NED` 变换；真实安装外参仍必须由现场测量提供。
+统计；默认还会去掉 Mid-360 原始数据中的 `(0,0,0)` 占位点。
+
+`lidar_transform.py` 使用现场测得的 Mid-360 外参把点从 `livox_frame` 转到
+`base_link`：当前初始值为 `x=+0.15 m`、`y=0`、`z=+0.22 m`，安装角为 0。入口识别和
+避障都应先调用 `pointcloud_message_to_base_link_xyz()` 或
+`transform_lidar_points_to_base_link()`，再使用点的位置。这样障碍物位置不会停留在
+LiDAR 自身坐标系中。若需要全局 NED 位置，还要继续使用当时的 `base_link → usv_ned`
+位姿变换；本模块不猜测该动态位姿。
 
 `examples.export_mid360_bag_frames` 可以只读 rosbag，将抽样后的 PointCloud2 清洗并保存
 为独立 `.npy` 帧和 `manifest.json`。该工具只供离线检查，不启动节点、不发布 topic、

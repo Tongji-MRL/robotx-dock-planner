@@ -59,6 +59,13 @@ from .pointcloud_adapter import (
     pointcloud2_buffer_to_xyz, pointcloud2_message_to_xyz,
     summarize_xyz_quality,
 )
+from .lidar_transform import (
+    LidarExtrinsics, default_mid360_extrinsics,
+    pointcloud_message_to_base_link_xyz,
+    transform_base_link_points_to_lidar,
+    transform_lidar_point_to_base_link,
+    transform_lidar_points_to_base_link,
+)
 from .ned_map_adapter import (
     GpsOrigin, NedOffset, add_ned_offset, geodetic_to_ecef,
     semantic_map_to_coarse_docks, transform_semantic_map,
@@ -116,6 +123,10 @@ __all__ = [
     "PointCloud2Buffer", "PointCloudXYZQuality", "PointFieldSpec",
     "pointcloud2_buffer_to_xyz", "pointcloud2_message_to_xyz",
     "summarize_xyz_quality",
+    "LidarExtrinsics", "default_mid360_extrinsics",
+    "pointcloud_message_to_base_link_xyz",
+    "transform_lidar_points_to_base_link", "transform_lidar_point_to_base_link",
+    "transform_base_link_points_to_lidar",
     "GpsOrigin", "NedOffset", "add_ned_offset", "geodetic_to_ecef",
     "semantic_map_to_coarse_docks", "transform_semantic_map",
     "uav_origin_in_usv_ned",
