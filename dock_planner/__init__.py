@@ -26,6 +26,16 @@ from .dock_perception import (
     filter_point_cloud, generate_synthetic_dock_point_cloud,
 )
 from .types import DockSpec, PlannerConfig, PlanResult, PlanStatus, Pose2D
+from .color_sequence import (
+    COLOR_SEQUENCE_MESSAGE_TYPE, COLOR_SEQUENCE_TOPIC, ColorCode,
+    ColorSequenceVector, decode_color_sequence,
+)
+from .sprayer_interfaces import SprayerTargetObservation
+from .watering import (
+    WateringCompletionTracker, WateringSequenceController, WateringSequenceResult,
+    WateringSequenceState, WateringVerificationConfig, WateringVerificationResult,
+    WateringVerificationState,
+)
 
 __all__ = [
     "DockPlanner", "DockSpec", "PlannerConfig", "PlanResult", "PlanStatus", "Pose2D",
@@ -47,4 +57,9 @@ __all__ = [
     "DockPerceptionConfig", "DockOpeningCandidate",
     "DockPerceptionDebugResult", "NumpyDockPerception", "OrientedBoundingBox2D", "SyntheticDockConfig",
     "filter_point_cloud", "generate_synthetic_dock_point_cloud",
+    "COLOR_SEQUENCE_TOPIC", "COLOR_SEQUENCE_MESSAGE_TYPE", "ColorCode",
+    "ColorSequenceVector", "decode_color_sequence", "SprayerTargetObservation",
+    "WateringCompletionTracker", "WateringSequenceController", "WateringSequenceResult",
+    "WateringSequenceState", "WateringVerificationConfig", "WateringVerificationResult",
+    "WateringVerificationState",
 ]

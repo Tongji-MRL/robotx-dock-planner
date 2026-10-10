@@ -54,6 +54,9 @@ result = planner.plan(
 - `dock_planner/ros_twist_adapter.py`：通用速度命令到 ROS `Twist` 的消息适配。
 - `dock_planner/task3_flow.py`：不依赖 ROS 的搜索、颜色判定和终端规划流程骨架。
 - `dock_planner/dock_perception.py`：离线 NumPy 感知原型和 synthetic mock；当前不接 ROS。
+- `dock_planner/color_sequence.py`：颜色序列通信契约；不依赖 ROS。
+- `dock_planner/sprayer_interfaces.py`：云台/喷水感知结果的纯 Python 数据契约。
+- `dock_planner/watering.py`：停泊后的瞄准、喷水和绿灯确认状态逻辑；不直接控制硬件。
 - `dock_planner/__init__.py`：公开导入接口。
 - `examples/basic.py`：打印一组示例输入和结果。
 - `examples/__init__.py`：使示例可通过模块方式运行。
@@ -421,6 +424,30 @@ python3 -B -m examples.phase1_target
 bash scripts/build_gz_full_docking.sh
 ./generated/gz_full_docking generated/phase1_target.json
 ```
+
+## Task3 接口契约
+
+颜色序列建议通过以下接口交给 communication 模块：
+
+```text
+topic: /tongji_mrl/twave/task3/color_sequence
+type:  std_msgs/msg/Int32MultiArray
+data:  [tin_color, circle_color]
+```
+
+颜色编码为 `UNKNOWN=0`、`RED=1`、`GREEN=2`、`BLUE=3`、`WHITE=4`、`AMBER=5`。
+向量必须恰好包含两个元素，任一元素为 `UNKNOWN` 时结果无效。
+
+停泊后的喷水纯逻辑流程为：
+
+```text
+DOCKED -> WAITING_FOR_RED -> AIMING -> SPRAYING
+       -> VERIFYING_GREEN -> COMPLETE
+```
+
+`WateringSequenceController` 只输出 `pump_on_requested`、
+`pump_off_requested` 和 `watering_complete` 决策。真实 ROS adapter 再根据这些决策
+调用云台和 `/pump/set`，本规划包不直接连接水泵、云台或 PX4。
 
 控制目标仍全部读取 adapter + DockPlanner 生成的 `phase1_target.json`。连续控制器复用
 Phase 1/1.5/2/3 参数；官方 300 s 基线中 `GO_TO_APPROACH` 用时 138.500 s，是明确
