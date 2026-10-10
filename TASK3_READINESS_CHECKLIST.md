@@ -32,8 +32,9 @@
 | P0 | [x] | Mid-360 驱动 | `/livox/lidar` 为 PointCloud2，`livox_frame`，约 10 Hz、单帧约 19968 点；`/livox/imu` 实时约 200 Hz | 保留启动命令和配置，后续做开机启动评审 |
 | P0 | [x] | 共用 Mid-360 ROS2 包 | `ros2/robotx_perception_common/` 已包含 PointCloud2 解析、`livox_frame → base_link` 转换和 `task3_lidar_bringup.launch.py` | 放入 Orin 工作区后执行 colcon 构建，核对 topic、frame 和启动参数 |
 | P0 | [x] | PointCloud2 纯解析核心 | 已按 Mid-360 实际 26-byte 混合字段布局实现 x/y/z 提取、NaN/Inf 过滤、全零占位点过滤和质量统计 | 使用 dock 现场 rosbag 验证入口识别结果 |
-| P0 | [ ] | PointCloud2 ROS adapter | 纯解析核心已直接读取真实 rosbag 的 rclpy PointCloud2 消息；离线抽帧工具已验证 | 在 Orin 订阅 `/livox/lidar`，接入离线检测器并保持 `livox_frame` 边界 |
-| P0 | [ ] | Mid-360 安装外参/TF | 已测得 `base_link → livox_frame` 初始值 `(+0.15, 0, +0.22) m`，水平正对船艏；在线 TF 尚未验证 | 在 Orin 建立并验证同一静态 TF，确认 frame 名称和发布方向 |
+| P0 | [ ] | PointCloud2 ROS adapter | 已实现独立 `task3_lidar_perception` 节点：订阅 `/livox/lidar`、转换到 `base_link`/NED，并发布现有 `dock_perception` JSON；纯函数和 167 项测试通过 | 在 Orin 构建节点，提供带 `heading_rad` 的 NED 位姿后用真实 dock/rosbag 验证入口结果 |
+| P0 | [x] | Mid-360 安装外参/TF | 已测得 `base_link → livox_frame` `(+0.15, 0, +0.22) m`；Orin 已建立静态 TF，`tf2_echo` 已验证 frame 和数值 | 水上低速转向测试后再确认安装误差余量 |
+| P0 | [ ] | Task3 LiDAR 入口识别 ROS bridge | `task3_lidar_perception.launch.py` 和 `task3_lidar_perception` 节点已加入公共包；明确拒绝没有航向的 position-only 输入 | 在 Orin 安装后，接入真实 coarse dock、NED heading 和入口点云，验证 `/tongji_mrl/twave/task3/dock_perception` |
 | P1 | [x] | Mid-360 测试 rosbag | 已复制到本地并直接读取；12.664 s、62.8 MiB、126 帧点云 | 继续采集包含真实 dock 和多角度观察的 bag |
 | P1 | [x] | 真实点云质量统计 | 单帧 19872 点，XYZ 有限比例 100%；754 个全零占位点（约 3.8%）已识别，最大距离 8.840 m | 现场 dock 数据继续记录相同统计，注意原始数据保留全零点 |
 | P1 | [x] | 离线 dock 入口几何识别 | synthetic 点云与仿真多视角检测已经完成 | 用录制的 Mid-360 数据调参，不伪造 TF |
