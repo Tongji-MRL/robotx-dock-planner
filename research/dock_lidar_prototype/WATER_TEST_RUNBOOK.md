@@ -14,7 +14,7 @@ USV 操作：
 - 记录当天日期、天气和 dock 入口的大致位置。
 - 手机准备拍摄 USV 与 dock 的合照。
 
-## 1. 终端 A：确认当前 Orin 终端
+## 1. 终端 A：确认当前 Orin 终端和公共包
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -23,30 +23,46 @@ source /home/robotx/robotx_ws/install/setup.bash
 hostname
 date
 df -h /home/robotx
+ros2 pkg prefix robotx_perception_common
 ```
 
-确认工作区和磁盘正常后保持这个终端打开。每次录包的目录名会在终端 D 中由当前时间自动生成，不需要手动改文件名。
+如果上一条能输出公共包路径，保持这个终端打开。每次录包的目录名会在终端 F 中由当前时间自动生成，不需要手动改文件名。
 
-## 2. 终端 B：启动 Mid-360 驱动
+如果提示找不到公共包，只需首次部署时执行：
 
-新开一个 Orin 终端，执行：
+```bash
+cd /home/robotx/robotx_ws
+source /opt/ros/humble/setup.bash
+source /home/robotx/livox_ws/install/setup.bash
+colcon build --packages-select robotx_perception_common
+source install/setup.bash
+```
+
+## 2. 终端 B：启动 Mid-360 和静态 TF
+
+新开一个 Orin 终端，执行统一启动文件：
 
 ```bash
 source /opt/ros/humble/setup.bash
 source /home/robotx/livox_ws/install/setup.bash
-ros2 pkg prefix livox_ros_driver2
-ros2 launch livox_ros_driver2 msg_MID360_launch.py
+source /home/robotx/robotx_ws/install/setup.bash
+ros2 launch robotx_perception_common task3_lidar_bringup.launch.py
 ```
 
-如果 launch 文件名称不同，先查：
+这个终端会同时启动：
+
+- Mid-360 驱动；
+- `base_link → livox_frame` 静态 TF。
+
+保持这个终端运行，不要关闭。
+
+如果驱动已经在其他终端运行，则改用：
 
 ```bash
-find /home/robotx/livox_ws -name '*MID360*launch.py' -o -name '*mid360*launch.py'
+ros2 launch robotx_perception_common task3_lidar_bringup.launch.py start_driver:=false
 ```
 
-保持驱动终端运行，不要关闭。
-
-## 3. 终端 C：确认点云和 TF
+## 3. 终端 C：确认点云
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -54,23 +70,48 @@ source /home/robotx/livox_ws/install/setup.bash
 source /home/robotx/robotx_ws/install/setup.bash
 
 ros2 topic list -t | grep -E '/livox/lidar|/tf|/fix|odom|ned_position'
-ros2 topic hz /livox/lidar
 ros2 topic info /livox/lidar --verbose
 ```
 
-确认点云频率约 10 Hz 后，再检查外参：
+确认列表中出现：
+
+```text
+/livox/lidar [sensor_msgs/msg/PointCloud2]
+```
+
+## 4. 终端 D：确认点云频率
+
+再开一个 Orin 终端，只执行下面这一条：
 
 ```bash
+source /opt/ros/humble/setup.bash
+source /home/robotx/livox_ws/install/setup.bash
+ros2 topic hz /livox/lidar
+```
+
+确认平均频率约 10 Hz 后，按 `Ctrl+C` 停止频率检查。
+
+## 5. 终端 E：确认静态 TF
+
+再开一个 Orin 终端：
+
+```bash
+source /opt/ros/humble/setup.bash
 ros2 run tf2_ros tf2_echo base_link livox_frame
 ```
 
-如果能持续输出变换，记录 x、y、z 和 yaw。
+确认持续输出：
 
-如果提示找不到变换，仍然可以采集原始点云，但本次结果只能用于点云质量和几何离线分析，不能接入最终 NED 入口接口。
+```text
+x = 0.150
+y = 0.000
+z = 0.220
+roll = pitch = yaw = 0
+```
 
-## 4. 终端 D：开始录包
+## 6. 终端 F：开始录包
 
-先在终端 D 创建本次录包目录。目录名使用当前时间自动生成：
+先在终端 F 创建本次录包目录。目录名使用当前时间自动生成：
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -95,7 +136,7 @@ ros2 bag record \
 
 不要录入不存在的 topic，也不要在这一轮启动控制节点。
 
-## 5. 近距离静态点：约 2 m
+## 7. 近距离静态点：约 2 m
 
 USV 操作：
 
@@ -103,9 +144,9 @@ USV 操作：
 2. 船停稳，船头大致朝向入口。
 3. 保持静止 20 秒。
 4. 手机拍一张能同时看到 USV 和 dock 的照片。
-5. 在终端 D 按 `Ctrl+C` 停止录包。
+5. 在终端 F 按 `Ctrl+C` 停止录包。
 
-终端 D：
+终端 F：
 
 ```bash
 ros2 bag info "$BAG"
@@ -113,9 +154,9 @@ ros2 bag info "$BAG"
 
 确认消息数量大于 0、包含 `/livox/lidar` 后，再进入下一组。
 
-## 6. 中距离静态点：约 4 m
+## 8. 中距离静态点：约 4 m
 
-重新在终端 D 生成当前时间目录并开始录包：
+重新在终端 F 生成当前时间目录并开始录包：
 
 ```bash
 BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
@@ -138,7 +179,7 @@ USV 操作：
 ros2 bag info "$BAG"
 ```
 
-## 7. 远距离静态点：约 6 m
+## 9. 远距离静态点：约 6 m
 
 ```bash
 BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
@@ -156,9 +197,9 @@ USV 操作：
 
 如果水域安全范围不允许 6 m，改成现场允许的“近、中、远”三个距离，并在记录中写下估计距离。
 
-## 8. 一次慢速经过
+## 10. 一次慢速经过
 
-终端 D：
+终端 F：
 
 ```bash
 BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
@@ -178,14 +219,14 @@ USV 操作：
 
 这一段不需要专门安排遮挡物，也不需要启动自动控制。
 
-## 9. 停止顺序
+## 11. 停止顺序
 
-1. 先在终端 D 按 `Ctrl+C` 停止 rosbag。
+1. 先在终端 F 按 `Ctrl+C` 停止 rosbag。
 2. 对每个 bag 执行 `ros2 bag info`。
-3. 确认 bag 文件已经写完后，再在终端 B 按 `Ctrl+C` 停止 Mid-360 驱动。
+3. 确认 bag 文件已经写完后，在终端 B 按 `Ctrl+C` 停止统一启动程序。
 4. 最后由驾驶员确认 USV 处于安全状态并断电。
 
-## 10. 回传文件
+## 12. 回传文件
 
 先在 Orin 上确认大小：
 
@@ -202,7 +243,7 @@ scp -r robotx@100.91.153.16:/home/robotx/livox_ws/bags/task3_water/* \
   /home/y/robotx_ws/downloads/task3_water/
 ```
 
-## 11. 第一轮通过条件
+## 13. 第一轮通过条件
 
 - 三个静态距离都有有效点云消息。
 - 每个静态 bag 能导出至少 5 帧。
