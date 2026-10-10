@@ -22,9 +22,13 @@ from dock_planner import (
     PlannerConfig,
     Pose2D,
     SyntheticDockConfig,
+    SprayerTargetObservation,
     Task3FlowManager,
     Task3FlowState,
+    WateringCompletionTracker,
+    WateringVerificationConfig,
     generate_synthetic_dock_point_cloud,
+    parse_logistics_request_json,
 )
 
 
@@ -132,6 +136,11 @@ def main() -> None:
         BayColorObservation("RED", 0.95, 102.2, "mock_color"), now=102.3,
     )
     _show(manager, "red bay rejected")
+    exit_plan = manager.prepare_non_target_bay_exit()
+    print(
+        "non-target exit goal        = "
+        f"({exit_plan.exit_goal.x:.3f}, {exit_plan.exit_goal.y:.3f})"
+    )
     manager.next_bay()
     manager.search_waypoint_reached()
     _show(manager, "arc search resumed")
@@ -160,6 +169,42 @@ def main() -> None:
     _show(manager, "terminal docking done")
     manager.docked_confirmed()
     _show(manager, "docked confirmed")
+
+    watering = WateringCompletionTracker(WateringVerificationConfig(
+        green_confirmation_s=5.0,
+        observation_timeout_s=1.1,
+    ))
+    red = watering.update(SprayerTargetObservation(
+        target_valid=True,
+        delivery_confirmed=False,
+        timestamp=103.5,
+        source="mock_sprayer_perception",
+    ))
+    print(f"red window / stop pump      = {red.stop_pump_requested}")
+    green = None
+    for timestamp in (104.0, 105.0, 106.0, 107.0, 108.0, 109.0):
+        green = watering.update(SprayerTargetObservation(
+            target_valid=False,
+            delivery_confirmed=True,
+            timestamp=timestamp,
+            source="mock_sprayer_perception",
+        ))
+    if green is None or not green.watering_complete:
+        raise RuntimeError("five-second GREEN confirmation did not complete")
+    print(f"green confirmed             = {green.confirmed_green_s:.1f} s")
+
+    sequence = parse_logistics_request_json(
+        '{"valid":true,"rule":"DISRUPTIVE",'
+        '"resource_color":"BLUE","destination_color":"GREEN"}',
+        timestamp=109.1,
+        source="mock_logistics_request",
+    )
+    if not sequence.is_actionable:
+        raise RuntimeError("mock logistics sequence is not actionable")
+    print(
+        "resource sequence            = "
+        f"({sequence.resource_color}, {sequence.destination_color})"
+    )
     manager.watering_complete()
     _show(manager, "watering complete")
 

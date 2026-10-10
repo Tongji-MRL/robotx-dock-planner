@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="robotx_2026_task3_dock">
+    <static>true</static>
+
+    <!--
+      Geometry encoded from the official top view supplied by the team:
+        overall width: 6.596 m
+        overall depth: 3.000 m
+        main deck: 13 cubes x 2 cubes
+        fingers: 4 fingers, each 1 cube x 4 cubes
+        three nominal cube positions between adjacent fingers
+
+      Coordinate convention:
+        +X runs from the open entrances toward the rear/main deck.
+        +Y runs across the three bays.
+        X=0 is the front tip and X=3 is the rear edge.
+
+      The collision geometry uses five simple boxes. Cube seams, connector
+      overhang, panel material, and flotation response are intentionally not
+      inferred from the drawing.
+    -->
+    <link name="dock_structure">
+      <pose>0 0 0 0 0 0</pose>
+
+      <collision name="main_deck_collision">
+        <pose>2.5 0 0.25 0 0 0</pose>
+        <geometry><box><size>1.0 6.596 0.5</size></box></geometry>
+      </collision>
+      <visual name="main_deck_visual">
+        <pose>2.5 0 0.25 0 0 0</pose>
+        <geometry><box><size>1.0 6.596 0.5</size></box></geometry>
+        <material>
+          <ambient>0.42 0.31 0.20 1</ambient>
+          <diffuse>0.58 0.43 0.27 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- 13 cube positions across 6.596 m give a 0.5073846 m pitch.
+           Fingers occupy cube indices 0, 4, 8, and 12. -->
+      <collision name="finger_1_collision">
+        <pose>1.0 -3.0443076923 0.25 0 0 0</pose>
+        <geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+      </collision>
+      <visual name="finger_1_visual">
+        <pose>1.0 -3.0443076923 0.25 0 0 0</pose>
+        <geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+        <material><ambient>0.42 0.31 0.20 1</ambient><diffuse>0.58 0.43 0.27 1</diffuse></material>
+      </visual>
+
+      <collision name="finger_2_collision">
+        <pose>1.0 -1.0147692308 0.25 0 0 0</pose>
+        <geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+      </collision>
+      <visual name="finger_2_visual">
+        <pose>1.0 -1.0147692308 0.25 0 0 0</pose>
+        <geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+        <material><ambient>0.42 0.31 0.20 1</ambient><diffuse>0.58 0.43 0.27 1</diffuse></material>
+      </visual>
+
+      <collision name="finger_3_collision">
+        <pose>1.0 1.0147692308 0.25 0 0 0</pose>
+        <geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+      </collision>
+      <visual name="finger_3_visual">
+        <pose>1.0 1.0147692308 0.25 0 0 0</pose>
+        <geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+        <material><ambient>0.42 0.31 0.20 1</ambient><diffuse>0.58 0.43 0.27 1</diffuse></material>
+      </visual>
+
+      <collision name="finger_4_collision">
+        <pose>1.0 3.0443076923 0.25 0 0 0</pose>
+        <geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+      </collision>
+      <visual name="finger_4_visual">
+        <pose>1.0 3.0443076923 0.25 0 0 0</pose>
+        <geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+        <material><ambient>0.42 0.31 0.20 1</ambient><diffuse>0.58 0.43 0.27 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

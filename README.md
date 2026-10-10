@@ -54,7 +54,11 @@ result = planner.plan(
 - `dock_planner/ros_twist_adapter.py`：通用速度命令到 ROS `Twist` 的消息适配。
 - `dock_planner/task3_flow.py`：不依赖 ROS 的搜索、颜色判定和终端规划流程骨架。
 - `dock_planner/dock_perception.py`：离线 NumPy 感知原型和 synthetic mock；当前不接 ROS。
+- `dock_planner/color_sequence.py`：颜色序列通信契约；不依赖 ROS。
+- `dock_planner/bay_search.py`：入口中心关联、bay 去重、颜色拒绝和 terminal 失败记忆。
 - `dock_planner/__init__.py`：公开导入接口。
+- `TASK3_ABNORMAL_SCENARIOS.md`：任务前、中、后 158 项异常场景、当前覆盖状态和处置方案。
+- `TASK3_READINESS_CHECKLIST.md`：从离线逻辑到比赛级闭环的完成度清单。
 - `examples/basic.py`：打印一组示例输入和结果。
 - `examples/__init__.py`：使示例可通过模块方式运行。
 - `tests/test_planner.py`：平移、旋转、起点变化、非法输入及预留接口测试。
@@ -138,9 +142,14 @@ camera image -> color detection -> selected bay -> PreciseEntrancePoseNED
   表示观测不可用于转换。
 - `CoarseDockCenterObservationNED` 是中心点方案的独立粗定位输入，适合在 UAV
   暂时只提供一个 NED 中心点时做 approach/search mock；它不会被当作四个角点或精确入口。
-  `CoarseDockSearchConfig` 用已知 dock 外接尺寸、停船距离和定位误差计算搜索半径，
-  默认值可由现场标定覆盖。`coarse_dock_staging_pose()` 根据当前 USV 位置把中心点
-  转换成搜索圈上的临时 staging 点；它不生成入口 pose，也不替代 Mid-360 局部感知。
+  `CoarseDockSearchConfig` 用已知 dock 外接尺寸、船体包络、尺寸测量余量、停船距离和
+  定位误差计算搜索半径，默认值可由现场标定覆盖。当前默认半径约为 `7.643 m`，其中
+  已计入 `0.92 m` 船体包络和 `0.10 m` 粗测余量。`coarse_dock_staging_pose()` 根据当前
+  USV 位置把中心点转换成搜索圈上的临时 staging 点；它不生成入口 pose，也不替代
+  Mid-360 局部感知。
+- `classify_coarse_dock_circle_position()` 明确区分圆外、已到圆周、圆内、进入不可缩减
+  最小包络和与粗中心重合五种情况。圆内时 staging 位于同一径向的外侧，船先退出到
+  圆周；已在圆周时 `Task3FlowManager` 直接进入搜索；与粗中心重合时不猜测退出方向。
 - `CircularDockSearchConfig` 和 `plan_circular_dock_search()` 从 staging 点开始生成
   一段可配置方向、弧长和点间距的圆弧目标。默认只搜索半圆。这里生成的是目标点，
   不会驱动船运动，也不保证整圈无障碍；真实任务必须由 executor/控制器逐点执行，
@@ -197,6 +206,127 @@ result = planner.plan(current_pose_ned, request.dock, obstacles=request.obstacle
 
 `current_pose_ned` 是 `Pose2D(north, east, heading_rad)`。已有 VRX adapter
 继续使用原接口与世界坐标，不依赖新数据结构。
+
+### 场地边界、重试和喷水完成监督
+
+`mission_safety.py` 提供不依赖 ROS 的任务监督接口：
+
+- `NavigableBoundaryNED` 表示每次场地单独提供的可航行区域多边形；
+- `plan_boundary_safe_circular_search()` 同时检查顺/逆时针搜索圆弧，只保留从 staging
+  点开始、连续且满足岸边净距的安全段；两侧都不足时返回失败，不生成实船控制；
+- `plan_adaptive_boundary_safe_circular_search()` 先使用原始安全半径；只有两个方向都没有
+  足够长的安全圆弧时，才按配置减小 stand-off 后重新检查。它不会缩小 dock 尺寸和
+  船体包络、尺寸余量、粗定位误差，也不会越过人工配置的最小 stand-off；当前位置到
+  staging 的完整直线路段也会做精确几何检查，覆盖船一开始位于搜索圆内、需要向外退出的情况；
+- `DockAttemptSupervisor` 同时限制单次尝试时间、总时间和最大尝试次数；
+- 达到限制后返回 `EXIT_AND_RETURN`，`plan_exit_and_return()` 生成 dock 外退出目标和
+  另行配置的岸边等待目标。真实场地的边界和等待点必须由任务配置提供。
+
+`parse_logistics_request_json()` 解析
+`/robotx/perception/task3/logistics_request` 的资源颜色与目标圆颜色。缺字段、
+`UNKNOWN`、`NONE` 或 `valid=false` 不会成为可执行序列。通信到 UAV/OCS 仍由 USV
+状态机/通信模块负责。
+
+### 颜色序列通信契约
+
+Task3 规划侧固定颜色序列的建议通信接口如下：
+
+```text
+topic: /tongji_mrl/twave/task3/color_sequence
+type:  std_msgs/msg/Int32MultiArray
+data:  [tin_color, circle_color]
+```
+
+颜色编码为 `UNKNOWN=0`、`RED=1`、`GREEN=2`、`BLUE=3`、`WHITE=4`、`AMBER=5`。
+向量必须恰好有两个元素，第一个是锡罐颜色，第二个是圆圈颜色；任一元素为
+`UNKNOWN` 时结果无效。`dock_planner/color_sequence.py` 提供纯 Python 编解码和
+校验，ROS publisher/subscriber 仍由通信模块接入。对端确认订阅相同 topic 和消息类型后，
+再做正式 ROS 联调。
+
+`WateringCompletionTracker` 在首次收到 `delivery_confirmed` 时请求立即停泵，随后要求
+连续确认 GREEN 5 秒才报告完成；感知中断会重新计时，但不会请求自动重启水泵。
+它只产生决策，不调用真实水泵接口。
+
+`WateringSequenceController` 将停泊后的喷水步骤串起来：
+
+```text
+DOCKED -> WAITING_FOR_RED -> AIMING -> SPRAYING
+       -> VERIFYING_GREEN -> COMPLETE
+```
+
+红色窗口由 `target_valid=true, delivery_confirmed=false` 表示；云台报告 ready 后
+才产生一次 `pump_on_requested`。首次收到绿色窗口时产生一次
+`pump_off_requested`，并要求绿色连续保持 5 秒才报告 `watering_complete`。
+该类只输出决策，不调用 `/pump/set`，也不直接控制云台；ROS adapter 负责执行这些
+决策。
+
+`MotionCommandArbiter` 为 goto、terminal 和安全停止提供显式控制权。只有当前 owner 的
+新鲜 `GenericVelocityCommand` 可以通过；缺命令、过期、frame 不符或超过配置限制时
+输出零速度。ROS 层必须把 goto/terminal 输出重映射到不同输入 topic，并只让 arbiter
+发布最终 `/usv/control/cmd_vel`。
+
+`ObstacleAvoidanceDecision` 是预留给 Task1/Orin 公共避障模块的纯接口，动作包括
+`PROCEED`、`HOLD`、`REPLAN` 和 `ABORT`。仲裁器只在收到新鲜的 `PROCEED` 时允许当前
+控制器继续输出；其他动作和过期结果都会输出零速度。实船可开启
+`require_avoidance_decision=True`，让避障结果缺失也触发停止。该接口不绑定 ROS topic，
+后续只需由公共模块 adapter 填充，不需要修改 DockPlanner。
+
+### 异常场景审计
+
+[`TASK3_ABNORMAL_SCENARIOS.md`](TASK3_ABNORMAL_SCENARIOS.md) 将任务前、粗定位与接近、
+LiDAR 搜索、颜色与终端靠泊、喷水、返航和系统级故障拆成 158 项。每一项明确标为
+已覆盖、部分覆盖或未覆盖，并给出默认安全动作和下一步。当前统计为 52 项已覆盖、
+34 项部分覆盖、72 项未覆盖；其中 61 项未覆盖问题属于实船自主控制前必须处理的 P0。
+
+规划安全层现在检查 waypoint 之间的完整线段，而不只检查端点。approach、搜索圆弧、
+terminal、退出和返航均可复用相同的多边形求交与净距逻辑；自交或重复顶点的边界会被
+拒绝。`BayVisitTracker` 用入口中心距离关联 bay，避免重复检查已拒绝或 terminal 失败的
+入口，并在三个预期 bay 全部不可用时结束搜索。
+颜色不匹配后，`Task3FlowManager.prepare_non_target_bay_exit()` 会生成“当前船位 →
+入口中心 → 入口外侧”的连续退出路径；执行器完成退出后再调用 `next_bay()`，恢复搜索，
+不会把船留在错误 bay 内直接继续绕行。
+`select_safe_return_goal()` 会优先保留人工配置且安全的等待点；首选点不满足边界净距或
+dock 最小距离时，才在边界内确定性选择最近的安全替代点。
+Task3 flow 还提供独立的入口和 bay 颜色最低置信度门；低于门限的结果不会触发状态前进。
+
+`pointcloud_adapter.py` 按实际 Mid-360 PointCloud2 字段布局提取 x/y/z，不要求
+intensity、tag、line、timestamp 与 XYZ 使用相同 datatype。它支持有限值过滤和质量
+统计；默认还会去掉 Mid-360 原始数据中的 `(0,0,0)` 占位点。
+
+`lidar_transform.py` 使用现场测得的 Mid-360 外参把点从 `livox_frame` 转到
+`base_link`：当前初始值为 `x=+0.15 m`、`y=0`、`z=+0.22 m`，安装角为 0。入口识别和
+避障都应先调用 `pointcloud_message_to_base_link_xyz()` 或
+`transform_lidar_points_to_base_link()`，再使用点的位置。这样障碍物位置不会停留在
+LiDAR 自身坐标系中。若需要全局 NED 位置，还要继续使用当时的 `base_link → usv_ned`
+位姿变换；本模块不猜测该动态位姿。
+
+`examples.export_mid360_bag_frames` 可以只读 rosbag，将抽样后的 PointCloud2 清洗并保存
+为独立 `.npy` 帧和 `manifest.json`。该工具只供离线检查，不启动节点、不发布 topic、
+不发送控制命令。入口检测和图片输出由独立的
+`research/dock_lidar_prototype/run_recorded_frame.py` 完成。
+
+面向 Orin 的公共 ROS 2 包模板位于
+`ros2/robotx_perception_common/`。它包含 Task1 和 Task3 共用的 PointCloud2 解析、
+`livox_frame → base_link` 转换，以及 `task3_lidar_bringup.launch.py`。部署时将该目录
+放入 Orin 工作区的 `src/` 后单独构建；Task3 的 dock 入口识别仍留在 Task3 包中。
+
+`ned_map_adapter.py` 实现 UAV 建图 NED 到 USV 本地 NED 的纯坐标适配。它使用 UAV
+建图起点和 USV 任务起点的 WGS84 经纬度及椭球高，先计算固定 NED 平移，再把
+`/task/semantic_map` 中的 dock 中心转换成 `CoarseDockCenterObservationNED`。转换不
+依赖 ROS、OCS 或 PX4，也不会根据车辆当前移动位置重复计算原点。项目接口已确认两套
+NED 的北、东、下方向一致，因此当前转换只做平移，不增加 yaw 旋转。
+
+坐标链纯 Python 演示：
+
+```bash
+python3 -m examples.task3_ned_map_dry_run
+```
+
+随机场地边界、三次失败和退出返航的纯逻辑演示：
+
+```bash
+python3 -m examples.task3_safety_recovery_dry_run
+```
 
 纯 Python 整链演示（无 ROS、无真实控制、无硬件）：
 

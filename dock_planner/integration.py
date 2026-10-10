@@ -117,15 +117,21 @@ class CoarseDockSearchConfig:
 
     dock_length_m: float = 6.596
     dock_width_m: float = 3.0
+    vessel_envelope_radius_m: float = 0.92
+    dimension_measurement_margin_m: float = 0.10
     stand_off_distance_m: float = 2.0
     position_uncertainty_m: float = 1.0
+    circle_reached_tolerance_m: float = 0.5
 
     def __post_init__(self) -> None:
         for name, value in (
             ("dock_length_m", self.dock_length_m),
             ("dock_width_m", self.dock_width_m),
+            ("vessel_envelope_radius_m", self.vessel_envelope_radius_m),
+            ("dimension_measurement_margin_m", self.dimension_measurement_margin_m),
             ("stand_off_distance_m", self.stand_off_distance_m),
             ("position_uncertainty_m", self.position_uncertainty_m),
+            ("circle_reached_tolerance_m", self.circle_reached_tolerance_m),
         ):
             if not _finite(value) or value < 0:
                 raise ValueError(f"{name} must be finite and nonnegative")
@@ -133,18 +139,76 @@ class CoarseDockSearchConfig:
             raise ValueError("dock dimensions must be positive")
 
     @property
-    def search_radius_m(self) -> float:
-        """Return a conservative circle radius around the coarse center."""
-
-        dock_envelope_radius = math.hypot(
+    def dock_envelope_radius_m(self) -> float:
+        return math.hypot(
             self.dock_length_m / 2.0,
             self.dock_width_m / 2.0,
         )
+
+    @property
+    def minimum_center_distance_m(self) -> float:
+        """Return the radius that boundary adaptation may not reduce."""
+
         return (
-            dock_envelope_radius
-            + self.stand_off_distance_m
+            self.dock_envelope_radius_m
+            + self.vessel_envelope_radius_m
+            + self.dimension_measurement_margin_m
             + self.position_uncertainty_m
         )
+
+    @property
+    def search_radius_m(self) -> float:
+        """Return a conservative base_link search radius around the dock center."""
+
+        return self.minimum_center_distance_m + self.stand_off_distance_m
+
+
+class CoarseDockCirclePosition(str, Enum):
+    """USV position relative to the configured center-only search circle."""
+
+    OUTSIDE = "OUTSIDE"
+    ON_CIRCLE = "ON_CIRCLE"
+    INSIDE = "INSIDE"
+    INSIDE_MINIMUM_CLEARANCE = "INSIDE_MINIMUM_CLEARANCE"
+    CENTER_UNDEFINED = "CENTER_UNDEFINED"
+
+
+def classify_coarse_dock_circle_position(
+    current_pose: Pose2D,
+    coarse_center: Union[NEDPoint, CoarseDockCenterObservationNED],
+    config: CoarseDockSearchConfig,
+) -> CoarseDockCirclePosition:
+    """Classify whether approach motion should move inward, outward, or be skipped.
+
+    ``INSIDE`` means a radial outward staging motion is geometrically defined.
+    ``INSIDE_MINIMUM_CLEARANCE`` additionally requires live local-clearance
+    confirmation because the conservative dock/USV envelopes overlap.
+    ``CENTER_UNDEFINED`` deliberately avoids inventing an escape direction.
+    """
+
+    if not isinstance(current_pose, Pose2D):
+        raise TypeError("current_pose must be a Pose2D")
+    if isinstance(coarse_center, CoarseDockCenterObservationNED):
+        if not coarse_center.valid:
+            raise ValueError("a valid coarse center observation is required")
+        center = coarse_center.center_ned
+    elif isinstance(coarse_center, NEDPoint):
+        center = coarse_center
+    else:
+        raise TypeError("coarse_center must be a NEDPoint or center observation")
+    if not isinstance(config, CoarseDockSearchConfig):
+        raise TypeError("config must be a CoarseDockSearchConfig")
+
+    distance = math.hypot(center.north - current_pose.x, center.east - current_pose.y)
+    if distance <= 1e-6:
+        return CoarseDockCirclePosition.CENTER_UNDEFINED
+    if abs(distance - config.search_radius_m) <= config.circle_reached_tolerance_m:
+        return CoarseDockCirclePosition.ON_CIRCLE
+    if distance < config.minimum_center_distance_m:
+        return CoarseDockCirclePosition.INSIDE_MINIMUM_CLEARANCE
+    if distance < config.search_radius_m:
+        return CoarseDockCirclePosition.INSIDE
+    return CoarseDockCirclePosition.OUTSIDE
 
 
 def coarse_dock_search_radius_m(config: CoarseDockSearchConfig) -> float:
@@ -184,8 +248,10 @@ def coarse_dock_staging_pose(
     north_delta = center.north - current_pose.x
     east_delta = center.east - current_pose.y
     distance = math.hypot(north_delta, east_delta)
-    if distance == 0.0:
-        raise ValueError("current pose and coarse center must not coincide")
+    if distance <= 1e-6:
+        raise ValueError(
+            "current pose is too close to the coarse center; escape direction is undefined"
+        )
 
     yaw = math.atan2(east_delta, north_delta)
     scale = config.search_radius_m / distance
@@ -316,6 +382,122 @@ class BayColorObservation:
         """Return whether this model result is still usable."""
 
         return self.valid and is_timestamp_fresh(self.timestamp, now, timeout_s)
+
+
+@dataclass(frozen=True)
+class ResourceColorSequenceObservation:
+    """Parsed Task 3 logistics sequence consumed by the USV state machine.
+
+    ``resource_color`` is the tin/resource color and ``destination_color`` is
+    the receiving circle color.  This contract does not publish to the UAV or
+    OCS; the separate communication/state-machine layer owns that step.
+    """
+
+    rule: str
+    resource_color: str
+    destination_color: str
+    timestamp: float
+    source: str
+    valid: bool = True
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("rule", self.rule),
+            ("resource_color", self.resource_color),
+            ("destination_color", self.destination_color),
+            ("source", self.source),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a nonempty string")
+        if not _finite(self.timestamp):
+            raise ValueError("timestamp must be a finite real number")
+        if not isinstance(self.valid, bool):
+            raise ValueError("valid must be a boolean")
+        object.__setattr__(self, "rule", self.rule.strip().upper())
+        object.__setattr__(self, "resource_color", self.resource_color.strip().upper())
+        object.__setattr__(self, "destination_color", self.destination_color.strip().upper())
+        object.__setattr__(self, "source", self.source.strip())
+
+    @property
+    def is_actionable(self) -> bool:
+        """Return whether both colors are known and the producer marked them valid."""
+
+        unknown = {"UNKNOWN", "NONE"}
+        return bool(
+            self.valid
+            and self.resource_color not in unknown
+            and self.destination_color not in unknown
+        )
+
+    def is_fresh_at(self, now: float, timeout_s: float) -> bool:
+        return self.valid and is_timestamp_fresh(self.timestamp, now, timeout_s)
+
+
+def parse_logistics_request_json(
+    payload: Union[str, bytes, bytearray, Mapping[str, Any]],
+    *,
+    timestamp: float,
+    source: str = "/robotx/perception/task3/logistics_request",
+) -> ResourceColorSequenceObservation:
+    """Parse the perception group's JSON without adding ROS dependencies.
+
+    The currently confirmed JSON has no timestamp, so the adapter must supply
+    the ROS receive time explicitly.  Missing/null colors are retained as
+    ``UNKNOWN`` and therefore never become actionable.
+    """
+
+    if isinstance(payload, Mapping):
+        data = payload
+    elif isinstance(payload, (str, bytes, bytearray)):
+        try:
+            decoded = json.loads(payload)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("payload must contain valid JSON") from exc
+        if not isinstance(decoded, Mapping):
+            raise ValueError("logistics request JSON root must be an object")
+        data = decoded
+    else:
+        raise TypeError("payload must be JSON text or a mapping")
+
+    def normalized_text(value: object, default: str = "UNKNOWN") -> str:
+        return value.strip().upper() if isinstance(value, str) and value.strip() else default
+
+    return ResourceColorSequenceObservation(
+        rule=normalized_text(data.get("rule")),
+        resource_color=normalized_text(data.get("resource_color")),
+        destination_color=normalized_text(data.get("destination_color")),
+        timestamp=timestamp,
+        source=source,
+        valid=data.get("valid") if isinstance(data.get("valid"), bool) else False,
+    )
+
+
+@dataclass(frozen=True)
+class SprayerTargetObservation:
+    """Minimal observation consumed from the gimbal perception bridge.
+
+    A RED target normally has ``target_valid=True``.  A detected GREEN window
+    is represented by ``delivery_confirmed=True`` and may intentionally have
+    ``target_valid=False`` because it is no longer an aiming target.
+    """
+
+    target_valid: bool
+    delivery_confirmed: bool
+    timestamp: float
+    source: str = "/vision/target_observation"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target_valid, bool):
+            raise ValueError("target_valid must be a boolean")
+        if not isinstance(self.delivery_confirmed, bool):
+            raise ValueError("delivery_confirmed must be a boolean")
+        if not _finite(self.timestamp):
+            raise ValueError("timestamp must be a finite real number")
+        if not isinstance(self.source, str) or not self.source.strip():
+            raise ValueError("source must be a nonempty string")
+
+    def is_fresh_at(self, now: float, timeout_s: float) -> bool:
+        return is_timestamp_fresh(self.timestamp, now, timeout_s)
 
 
 @dataclass(frozen=True)
