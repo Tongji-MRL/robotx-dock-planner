@@ -1,6 +1,6 @@
 # RobotX 2026 Task 3 完成度清单
 
-更新时间：2026-10-08
+更新时间：2026-10-10
 
 说明：`[x]` 表示已经实现或确认，`[ ]` 表示仍需完成。纯 Python 项目打勾，
 只代表逻辑和单元测试完成，不代表 ROS、硬件或实船已经验证。
@@ -8,7 +8,7 @@
 | 优先级 | 完成 | 项目 | 当前证据 | 剩余工作 / 所需输入 |
 |---|---:|---|---|---|
 | P0 | [x] | 任务全流程确认 | 粗定位、局部搜索、bay 检查、最终靠泊、喷水和颜色序列流程已整理 | Handbook 更新时同步检查 |
-| P0 | [x] | 异常场景系统审计 | `TASK3_ABNORMAL_SCENARIOS.md` 已按任务前中后审计 158 项：52 已覆盖、33 部分覆盖、73 未覆盖 | 按矩阵继续补齐 62 个未覆盖 P0；相似项由统一 safety/watchdog/fault manager 合并解决 |
+| P0 | [x] | 异常场景系统审计 | `TASK3_ABNORMAL_SCENARIOS.md` 已按任务前中后审计 158 项：52 已覆盖、34 部分覆盖、72 未覆盖 | 按矩阵继续补齐 61 个未覆盖 P0；相似项由统一 safety/watchdog/fault manager 合并解决 |
 | P0 | [x] | DockPlanner 最终靠泊几何 | approach、align、entrance、stop 基线测试通过 | 仍需通过适配器交给实船控制器执行 |
 | P0 | [x] | UAV 粗中心接口 | 已有 `CoarseDockCenterObservationNED` 和数据时效检查 | Orin ROS adapter 需要读取真实 semantic map 消息 |
 | P0 | [x] | UAV-NED 转 USV-NED 纯转换 | 已按 PDF 的 WGS84/ECEF/NED 公式实现；semantic map 可输出现有 coarse dock 中心接口；已确认两套 NED 轴共向 | 当前只需固定平移，无需 yaw 旋转 |
@@ -59,7 +59,7 @@
 
 ## 当前本地验证
 
-- 完整 pytest：`185 passed`。
+- 核心 pytest：`176 passed`；另有 6 个 Gazebo/VRX 静态测试因当前环境缺少 WAM-V URDF 和官方 SDF 未运行通过，不能视为代码失败。
 - 独立 LiDAR prototype：`18 tests passed`；200 组随机 synthetic 场景严格成功率 98.5%，
   32 个仿真视角中 5 个可见入口视角全部选对最高候选，覆盖 3 个 bay。
 - 真实 Mid-360 bag 抽帧：已验证 `livox_frame`、混合字段解析和全零点过滤。

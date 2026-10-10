@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from .integration import SprayerTargetObservation
+from .sprayer_interfaces import SprayerTargetObservation
 
 
 class WateringVerificationState(str, Enum):

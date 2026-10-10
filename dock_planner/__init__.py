@@ -11,7 +11,7 @@ from .integration import (
     GlobalApproachPlanner,
     GlobalApproachResult, GenericVelocityCommand,
     GlobalApproachStatus, NEDPoint, ObstaclePointNED, PreciseEntrancePoseNED,
-    ResourceColorSequenceObservation, SprayerTargetObservation, TerminalPlanInput,
+    ResourceColorSequenceObservation, TerminalPlanInput,
     classify_coarse_dock_circle_position, coarse_dock_search_radius_m,
     coarse_dock_staging_pose,
     dock_vision_to_bay_color_observation,
@@ -76,6 +76,7 @@ from .color_sequence import (
     COLOR_SEQUENCE_MESSAGE_TYPE, COLOR_SEQUENCE_TOPIC, ColorCode,
     ColorSequenceVector, decode_color_sequence,
 )
+from .sprayer_interfaces import SprayerTargetObservation
 from .bay_search import (
     BayCandidateAction, BayCandidateDecision, BayDisposition,
     BayVisitConfig, BayVisitRecord, BayVisitTracker,
