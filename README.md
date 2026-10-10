@@ -55,6 +55,8 @@ result = planner.plan(
 - `dock_planner/task3_flow.py`：不依赖 ROS 的搜索、颜色判定和终端规划流程骨架。
 - `dock_planner/dock_perception.py`：离线 NumPy 感知原型和 synthetic mock；当前不接 ROS。
 - `dock_planner/color_sequence.py`：颜色序列通信契约；不依赖 ROS。
+- `dock_planner/sprayer_interfaces.py`：云台/喷水感知结果的数据契约。
+- `dock_planner/watering.py`：停泊后的瞄准、喷水和绿色确认状态逻辑；不直接控制硬件。
 - `dock_planner/bay_search.py`：入口中心关联、bay 去重、颜色拒绝和 terminal 失败记忆。
 - `dock_planner/__init__.py`：公开导入接口。
 - `TASK3_ABNORMAL_SCENARIOS.md`：任务前、中、后 158 项异常场景、当前覆盖状态和处置方案。

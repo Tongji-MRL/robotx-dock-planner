@@ -30,6 +30,7 @@
 | P0 | [ ] | ROS 速度命令仲裁节点 | goto 和 terminal 当前都面向 `/usv/control/cmd_vel` | 分别重映射输入，只允许仲裁节点发布最终速度 |
 | P0 | [x] | MAVROS 工作区定位 | `/home/robotx/mavros_ws/install` 中已有节点和 local-position/setpoint 插件 | source 后做台架验证；当前终端环境尚未加载该 overlay |
 | P0 | [x] | Mid-360 驱动 | `/livox/lidar` 为 PointCloud2，`livox_frame`，约 10 Hz、单帧约 19968 点；`/livox/imu` 实时约 200 Hz | 保留启动命令和配置，后续做开机启动评审 |
+| P0 | [x] | 共用 Mid-360 ROS2 包 | `ros2/robotx_perception_common/` 已包含 PointCloud2 解析、`livox_frame → base_link` 转换和 `task3_lidar_bringup.launch.py` | 放入 Orin 工作区后执行 colcon 构建，核对 topic、frame 和启动参数 |
 | P0 | [x] | PointCloud2 纯解析核心 | 已按 Mid-360 实际 26-byte 混合字段布局实现 x/y/z 提取、NaN/Inf 过滤、全零占位点过滤和质量统计 | 使用 dock 现场 rosbag 验证入口识别结果 |
 | P0 | [ ] | PointCloud2 ROS adapter | 纯解析核心已直接读取真实 rosbag 的 rclpy PointCloud2 消息；离线抽帧工具已验证 | 在 Orin 订阅 `/livox/lidar`，接入离线检测器并保持 `livox_frame` 边界 |
 | P0 | [ ] | Mid-360 安装外参/TF | 已测得 `base_link → livox_frame` 初始值 `(+0.15, 0, +0.22) m`，水平正对船艏；在线 TF 尚未验证 | 在 Orin 建立并验证同一静态 TF，确认 frame 名称和发布方向 |
