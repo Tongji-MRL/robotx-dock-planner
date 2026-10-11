@@ -81,6 +81,14 @@ from .bay_search import (
     BayCandidateAction, BayCandidateDecision, BayDisposition,
     BayVisitConfig, BayVisitRecord, BayVisitTracker,
 )
+from .task3_status_codec import (
+    CommonError, PlannerCommand, Task3Step, Task4Step, TaskCode,
+    TaskStatusCode, VehicleCode,
+)
+from .task3_subfsm_bridge import (
+    MasterCommand, MasterCommandType, ResumePolicy, SubFSMReport,
+    Task3Checkpoint, Task3SubFSMBridge,
+)
 
 __all__ = [
     "DockPlanner", "DockSpec", "PlannerConfig", "PlanResult", "PlanStatus", "Pose2D",
@@ -139,4 +147,8 @@ __all__ = [
     "ColorSequenceVector", "decode_color_sequence",
     "BayCandidateAction", "BayCandidateDecision", "BayDisposition",
     "BayVisitConfig", "BayVisitRecord", "BayVisitTracker",
+    "CommonError", "PlannerCommand", "Task3Step", "Task4Step", "TaskCode",
+    "TaskStatusCode", "VehicleCode",
+    "MasterCommand", "MasterCommandType", "ResumePolicy", "SubFSMReport",
+    "Task3Checkpoint", "Task3SubFSMBridge",
 ]
