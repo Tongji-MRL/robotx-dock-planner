@@ -1,0 +1,30 @@
+from glob import glob
+from setuptools import setup
+
+package_name = "usv_task3_executor"
+setup(
+    name=package_name,
+    version="0.1.0",
+    # Keep the ROS wrapper here while installing the planner directly from the
+    # repository root.  This avoids maintaining a second copy of dock_planner
+    # inside the ROS package.
+    packages=["usv_task3_executor", "dock_planner"],
+    package_dir={
+        "usv_task3_executor": "../../usv_task3_executor",
+        "dock_planner": "../../dock_planner",
+    },
+    data_files=[
+        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        ("share/" + package_name, ["package.xml"]),
+        ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
+    ],
+    install_requires=["setuptools"],
+    zip_safe=True,
+    entry_points={
+        "console_scripts": [
+            "task3_executor = usv_task3_executor.node:main",
+            "task3_perception_adapter = usv_task3_executor.perception_adapter:main",
+            "task3_semantic_map_mock_adapter = usv_task3_executor.semantic_map_adapter:main",
+        ]
+    },
+)

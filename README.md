@@ -315,7 +315,13 @@ LiDAR 自身坐标系中。若需要全局 NED 位置，还要继续使用当时
 面向 Orin 的公共 ROS 2 包模板位于
 `ros2/robotx_perception_common/`。它包含 Task1 和 Task3 共用的 PointCloud2 解析、
 `livox_frame → base_link` 转换，以及 `task3_lidar_bringup.launch.py`。部署时将该目录
-放入 Orin 工作区的 `src/` 后单独构建；Task3 的 dock 入口识别仍留在 Task3 包中。
+随本仓库放入 Orin 工作区的 `src/` 后构建；Task3 的 dock 入口识别仍留在 Task3 包中。
+
+Orin 现有的 ROS executor 已收回本仓库：ROS 包元数据和 launch 文件位于
+`ros2/usv_task3_executor/`，节点源码位于 `usv_task3_executor/`。该 ROS 包在构建时直接
+安装仓库根目录唯一一份 `dock_planner/`，避免现场工作区再维护规划核心副本。把整个仓库
+克隆到 colcon 工作区 `src/` 后，可同时发现 `usv_task3_executor` 和
+`robotx_perception_common` 两个 ROS 包。
 
 `ned_map_adapter.py` 实现 UAV 建图 NED 到 USV 本地 NED 的纯坐标适配。它使用 UAV
 建图起点和 USV 任务起点的 WGS84 经纬度及椭球高，先计算固定 NED 平移，再把
