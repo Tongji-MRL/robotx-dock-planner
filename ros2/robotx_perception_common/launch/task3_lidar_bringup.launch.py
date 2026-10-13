@@ -21,7 +21,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([
                 FindPackageShare("livox_ros_driver2"),
-                "launch",
+                "launch_ROS2",
                 "msg_MID360_launch.py",
             ])
         ),
