@@ -60,10 +60,12 @@ result = planner.plan(
 - `dock_planner/bay_search.py`：入口中心关联、bay 去重、颜色拒绝和 terminal 失败记忆。
 - `dock_planner/task3_status_codec.py`：Task3 14 位状态码、固定错误目录和恢复动作解码。
 - `dock_planner/task3_subfsm_bridge.py`：Task3 子状态机与总规划器通信、Task4 抢占和恢复逻辑。
+- `dock_planner/task3_ros_contract.py`：progress/report/command/ACK、正确泊位、喷水窗口和双机 heartbeat 的纯 JSON 契约。
 - `dock_planner/__init__.py`：公开导入接口。
 - `TASK3_COMMUNICATION_PROTOCOL.md`：Task3 步骤、全部错误码、command、跨机数据和 Task4 恢复协议。
 - `TASK3_ERROR_CATALOG.md`：Task3 128 个步骤特有错误及通用错误的独立查表文档。
 - `TASK3_ERROR_CATALOG.csv`：供总规划器程序或表格软件读取的错误目录。
+- `TASK3_ROS_INTERFACE.md`：供总规划器和 Task3 联调的 ROS 2 Topic、消息样例、完成门控与启动方法。
 - `TASK3_ABNORMAL_SCENARIOS.md`：任务前、中、后 158 项异常场景、当前覆盖状态和处置方案。
 - `TASK3_READINESS_CHECKLIST.md`：从离线逻辑到比赛级闭环的完成度清单。
 - `examples/basic.py`：打印一组示例输入和结果。

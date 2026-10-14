@@ -50,6 +50,7 @@
 | P1 | [x] | 资源颜色序列解析 | 已解析锡罐/resource 颜色和圆圈/destination 颜色；staging 已验证有效、UNKNOWN、缺字段和 `CORE_COMPLETE` 变体 | 在 Orin 订阅正式 topic，交给 USV 状态机 |
 | P1 | [x] | 颜色序列接口契约 | staging 已固定 `/tongji_mrl/twave/task3/color_sequence` + `std_msgs/msg/Int32MultiArray`；`data=[tin_color,circle_color]`，6 个颜色编码和 UNKNOWN 规则已测试 | 交给 communication 模块和 UAV/OCS 负责人确认并接收 |
 | P1 | [ ] | 向 UAV/OCS 发布颜色序列 | 已有接口契约，但尚未接入正式 communication 模块 | 确认对端订阅同一 topic/type 后再做 ROS publisher |
+| P0 | [x] | Task3 与总规划器通信 adapter | 已实现正确 bay progress/靠泊完成报告、喷水窗口 progress/完成报告、14 位状态进度、命令 ACK/去重/转发、UAV/USV heartbeat 校验与超时 fault；ROS 2 隔离构建通过 | 同步到 Orin 后与总规划器做无控制 topic 联调；heartbeat 由两台车辆状态机发布真实数据 |
 | P1 | [x] | 重试次数和时间监督 | 最大次数、单次超时和总超时均可配置 | 现场测试后调整参数 |
 | P1 | [x] | 退出 dock 与返回几何 | 可生成 dock 外退出点和岸边等待目标点 | 每个场地配置经过确认的安全等待点 |
 | P1 | [ ] | 异常恢复接入 executor | 纯 Python 已能输出重试、退出和返回决策 | 接入 executor 状态与 goto DONE/ABORTED 反馈 |
