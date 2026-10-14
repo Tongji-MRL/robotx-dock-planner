@@ -16,6 +16,18 @@ ros2 launch usv_task3_executor task3_communication_adapter.launch.py run_id:=42
 
 该节点不启动或控制导航、PX4、泵和云台。
 
+Task3 与总规划器的 progress、report、command/ACK、正确泊位、喷水窗口以及双机
+heartbeat 监测由 `task3_communication_adapter` 提供。完整接口见仓库根目录
+`TASK3_ROS_INTERFACE.md`。
+
+只启动通信 adapter：
+
+```bash
+ros2 launch usv_task3_executor task3_communication_adapter.launch.py run_id:=42
+```
+
+该节点不启动或控制导航、PX4、泵和云台。
+
 The camera perception adapter records the interfaces currently available on the USV. It does not modify perception, plan routes, command PX4, or publish Task3 navigation outputs.
 
 ## Available Inputs

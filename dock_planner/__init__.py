@@ -89,6 +89,11 @@ from .task3_subfsm_bridge import (
     MasterCommand, MasterCommandType, ResumePolicy, SubFSMReport,
     Task3Checkpoint, Task3SubFSMBridge,
 )
+from .task3_ros_contract import (
+    CorrectBayInfo, HeartbeatMonitor, SprayerWindowInfo,
+    Task3RosMessageFactory, normalize_task_command,
+    validate_vehicle_heartbeat,
+)
 
 __all__ = [
     "DockPlanner", "DockSpec", "PlannerConfig", "PlanResult", "PlanStatus", "Pose2D",
@@ -151,4 +156,7 @@ __all__ = [
     "TaskStatusCode", "VehicleCode",
     "MasterCommand", "MasterCommandType", "ResumePolicy", "SubFSMReport",
     "Task3Checkpoint", "Task3SubFSMBridge",
+    "CorrectBayInfo", "HeartbeatMonitor", "SprayerWindowInfo",
+    "Task3RosMessageFactory", "normalize_task_command",
+    "validate_vehicle_heartbeat",
 ]

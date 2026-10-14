@@ -445,3 +445,10 @@ safe_actions
 
 除颜色序列外，结构化 payload 还用于 dock 粗中心、入口 pose、bay ID、window ID、
 Task4 目标、实际到达位置、checkpoint 和 UAV 投放结果。
+
+## 12. ROS 2 实际对接
+
+ROS 2 Topic、正确泊位输入、喷水窗口完成门控、UAV/USV heartbeat、命令 ACK 和 dry-run
+启动方式已经冻结在 [`TASK3_ROS_INTERFACE.md`](TASK3_ROS_INTERFACE.md)。
+
+`task3_communication_adapter` 只做协议校验和消息转发，不直接操作车辆或执行器。
