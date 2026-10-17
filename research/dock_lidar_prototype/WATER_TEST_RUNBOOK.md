@@ -1,6 +1,6 @@
 # Task3 水上 LiDAR 最小测试步骤
 
-第一轮目标：确认 Mid-360 在水上不同距离能稳定看到 dock 入口，并保存可复现的 rosbag。
+第一轮目标：确认 Mid-360 在水上不同距离能稳定看到 dock 入口，并把 rosbag 保存到统一日志目录。
 
 第一轮保持人工遥控，不启动 Task3 executor、状态机、泵或自动 setpoint。
 
@@ -18,25 +18,17 @@ USV 操作：
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /home/robotx/livox_ws/install/setup.bash
-source /home/robotx/robotx_ws/install/setup.bash
+source ~/robotx_ws/install/setup.bash
 hostname
 date
-df -h /home/robotx
+df -h ~/robotx_ws
 ros2 pkg prefix robotx_perception_common
+ros2 pkg prefix livox_ros_driver2
 ```
 
-如果上一条能输出公共包路径，保持这个终端打开。每次录包的目录名会在终端 F 中由当前时间自动生成，不需要手动改文件名。
+如果上一条能输出公共包路径，保持这个终端打开。每次录包的目录名会在终端 G 中由当前时间自动生成，不需要手动改文件名。
 
-如果提示找不到公共包，只需首次部署时执行：
-
-```bash
-cd /home/robotx/robotx_ws
-source /opt/ros/humble/setup.bash
-source /home/robotx/livox_ws/install/setup.bash
-colcon build --packages-select robotx_perception_common
-source install/setup.bash
-```
+如果找不到公共包或驱动包，先停止本次采集，让负责人按统一工作区流程构建；正常采集时不临时加载旧的 `livox_ws` 或 `mavros_ws`。
 
 ## 2. 终端 B：启动 Mid-360 和静态 TF
 
@@ -44,8 +36,7 @@ source install/setup.bash
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /home/robotx/livox_ws/install/setup.bash
-source /home/robotx/robotx_ws/install/setup.bash
+source ~/robotx_ws/install/setup.bash
 ros2 launch robotx_perception_common task3_lidar_bringup.launch.py
 ```
 
@@ -56,18 +47,23 @@ ros2 launch robotx_perception_common task3_lidar_bringup.launch.py
 
 保持这个终端运行，不要关闭。
 
-如果驱动已经在其他终端运行，则改用：
+## 3. 终端 C：启动共享 LiDAR 感知入口（可选）
 
-```bash
-ros2 launch robotx_perception_common task3_lidar_bringup.launch.py start_driver:=false
-```
-
-## 3. 终端 C：确认点云
+如果本次同时验证共享感知输出，在新终端执行：
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /home/robotx/livox_ws/install/setup.bash
-source /home/robotx/robotx_ws/install/setup.bash
+source ~/robotx_ws/install/setup.bash
+ros2 launch robotx_perception_common task3_lidar_perception.launch.py
+```
+
+如果只采集原始点云，可以跳过本终端。不要启动 `task3_executor`、状态机、泵或自动控制。
+
+## 4. 终端 D：确认点云
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/robotx_ws/install/setup.bash
 
 ros2 topic list -t | grep -E '/livox/lidar|/tf|/fix|odom|ned_position'
 ros2 topic info /livox/lidar --verbose
@@ -79,24 +75,25 @@ ros2 topic info /livox/lidar --verbose
 /livox/lidar [sensor_msgs/msg/PointCloud2]
 ```
 
-## 4. 终端 D：确认点云频率
+## 5. 终端 E：确认点云频率
 
 再开一个 Orin 终端，只执行下面这一条：
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /home/robotx/livox_ws/install/setup.bash
+source ~/robotx_ws/install/setup.bash
 ros2 topic hz /livox/lidar
 ```
 
 确认平均频率约 10 Hz 后，按 `Ctrl+C` 停止频率检查。
 
-## 5. 终端 E：确认静态 TF
+## 6. 终端 F：确认静态 TF
 
 再开一个 Orin 终端：
 
 ```bash
 source /opt/ros/humble/setup.bash
+source ~/robotx_ws/install/setup.bash
 ros2 run tf2_ros tf2_echo base_link livox_frame
 ```
 
@@ -109,14 +106,15 @@ z = 0.220
 roll = pitch = yaw = 0
 ```
 
-## 6. 终端 F：开始录包
+## 7. 终端 G：开始录包
 
-先在终端 F 创建本次录包目录。目录名使用当前时间自动生成：
+先在终端 G 创建本次录包目录。目录名使用当前时间自动生成：
 
 ```bash
 source /opt/ros/humble/setup.bash
-mkdir -p /home/robotx/livox_ws/bags/task3_water
-BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
+source ~/robotx_ws/install/setup.bash
+mkdir -p /home/robotx/robotx_logs/task3_lidar
+BAG="/home/robotx/robotx_logs/task3_lidar/dock_$(date +%Y%m%d_%H%M%S)"
 echo "即将录制：$BAG"
 ```
 
@@ -136,7 +134,7 @@ ros2 bag record \
 
 不要录入不存在的 topic，也不要在这一轮启动控制节点。
 
-## 7. 近距离静态点：约 2 m
+## 8. 近距离静态点：约 2 m
 
 USV 操作：
 
@@ -144,9 +142,9 @@ USV 操作：
 2. 船停稳，船头大致朝向入口。
 3. 保持静止 20 秒。
 4. 手机拍一张能同时看到 USV 和 dock 的照片。
-5. 在终端 F 按 `Ctrl+C` 停止录包。
+5. 在终端 G 按 `Ctrl+C` 停止录包。
 
-终端 F：
+终端 G：
 
 ```bash
 ros2 bag info "$BAG"
@@ -154,12 +152,12 @@ ros2 bag info "$BAG"
 
 确认消息数量大于 0、包含 `/livox/lidar` 后，再进入下一组。
 
-## 8. 中距离静态点：约 4 m
+## 9. 中距离静态点：约 4 m
 
-重新在终端 F 生成当前时间目录并开始录包：
+重新在终端 G 生成当前时间目录并开始录包：
 
 ```bash
-BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
+BAG="/home/robotx/robotx_logs/task3_lidar/dock_$(date +%Y%m%d_%H%M%S)"
 echo "即将录制：$BAG"
 ros2 bag record \
   -o "$BAG" \
@@ -179,10 +177,10 @@ USV 操作：
 ros2 bag info "$BAG"
 ```
 
-## 9. 远距离静态点：约 6 m
+## 10. 远距离静态点：约 6 m
 
 ```bash
-BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
+BAG="/home/robotx/robotx_logs/task3_lidar/dock_$(date +%Y%m%d_%H%M%S)"
 echo "即将录制：$BAG"
 ros2 bag record \
   -o "$BAG" \
@@ -197,12 +195,12 @@ USV 操作：
 
 如果水域安全范围不允许 6 m，改成现场允许的“近、中、远”三个距离，并在记录中写下估计距离。
 
-## 10. 一次慢速经过
+## 11. 一次慢速经过
 
-终端 F：
+终端 G：
 
 ```bash
-BAG="/home/robotx/livox_ws/bags/task3_water/$(date +%Y%m%d_%H%M%S)"
+BAG="/home/robotx/robotx_logs/task3_lidar/dock_$(date +%Y%m%d_%H%M%S)"
 echo "即将录制：$BAG"
 ros2 bag record \
   -o "$BAG" \
@@ -219,31 +217,31 @@ USV 操作：
 
 这一段不需要专门安排遮挡物，也不需要启动自动控制。
 
-## 11. 停止顺序
+## 12. 停止顺序
 
-1. 先在终端 F 按 `Ctrl+C` 停止 rosbag。
+1. 先在终端 G 按 `Ctrl+C` 停止 rosbag。
 2. 对每个 bag 执行 `ros2 bag info`。
-3. 确认 bag 文件已经写完后，在终端 B 按 `Ctrl+C` 停止统一启动程序。
+3. 确认 bag 文件已经写完后，在终端 B 按 `Ctrl+C` 停止统一启动程序；如果启动了终端 C 的共享感知，再按 `Ctrl+C` 停止终端 C。
 4. 最后由驾驶员确认 USV 处于安全状态并断电。
 
-## 12. 回传文件
+## 13. 回传文件
 
 先在 Orin 上确认大小：
 
 ```bash
-du -sh /home/robotx/livox_ws/bags/task3_water/*
-find /home/robotx/livox_ws/bags/task3_water -maxdepth 2 -type f -name 'metadata.yaml' -print
+du -sh /home/robotx/robotx_logs/task3_lidar/*
+find /home/robotx/robotx_logs/task3_lidar -maxdepth 2 -type f -name 'metadata.yaml' -print
 ```
 
 本地电脑执行：
 
 ```bash
-mkdir -p /home/y/robotx_ws/downloads/task3_water
-scp -r robotx@100.91.153.16:/home/robotx/livox_ws/bags/task3_water/* \
-  /home/y/robotx_ws/downloads/task3_water/
+mkdir -p /home/y/robotx_ws/downloads/task3_lidar
+scp -r robotx@100.91.153.16:/home/robotx/robotx_logs/task3_lidar/* \
+  /home/y/robotx_ws/downloads/task3_lidar/
 ```
 
-## 13. 第一轮通过条件
+## 14. 第一轮通过条件
 
 - 三个静态距离都有有效点云消息。
 - 每个静态 bag 能导出至少 5 帧。
