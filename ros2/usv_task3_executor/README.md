@@ -1,4 +1,20 @@
-# Task3 Perception Adapters
+# Task3 Perception and Communication Adapters
+
+Task3 与总规划器的 progress、report、command/ACK、正确泊位、喷水窗口以及双机
+heartbeat 监测由当前联调节点 `task3_communication_adapter` 提供。完整接口见仓库根目录
+`TASK3_ROS_INTERFACE.md`。
+
+统一 Orin 工作区中，车辆级 heartbeat 的生产发布者属于 `usv_state_machine`，通用
+通信转发属于 `robotx_communication`；本节点保留 Task3 事件到通信 envelope 的联调
+适配，不应在正式工作区复制第二份同名通信节点。
+
+只启动通信 adapter：
+
+```bash
+ros2 launch usv_task3_executor task3_communication_adapter.launch.py run_id:=42
+```
+
+该节点不启动或控制导航、PX4、泵和云台。
 
 The camera perception adapter records the interfaces currently available on the USV. It does not modify perception, plan routes, command PX4, or publish Task3 navigation outputs.
 

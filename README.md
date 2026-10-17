@@ -60,10 +60,12 @@ result = planner.plan(
 - `dock_planner/bay_search.py`：入口中心关联、bay 去重、颜色拒绝和 terminal 失败记忆。
 - `dock_planner/task3_status_codec.py`：Task3 14 位状态码、固定错误目录和恢复动作解码。
 - `dock_planner/task3_subfsm_bridge.py`：Task3 子状态机与总规划器通信、Task4 抢占和恢复逻辑。
+- `dock_planner/task3_ros_contract.py`：Task3 侧 progress/report/command/ACK、正确泊位、喷水窗口和双机 heartbeat 的纯 JSON 契约；统一 Orin 中的通用通信归 `robotx_communication`，车辆 heartbeat 由 `usv_state_machine` 发布。
 - `dock_planner/__init__.py`：公开导入接口。
 - `TASK3_COMMUNICATION_PROTOCOL.md`：Task3 步骤、全部错误码、command、跨机数据和 Task4 恢复协议。
 - `TASK3_ERROR_CATALOG.md`：Task3 128 个步骤特有错误及通用错误的独立查表文档。
 - `TASK3_ERROR_CATALOG.csv`：供总规划器程序或表格软件读取的错误目录。
+- `TASK3_ROS_INTERFACE.md`：供总规划器和 Task3 联调的 ROS 2 Topic、消息样例、完成门控与启动方法。
 - `TASK3_ABNORMAL_SCENARIOS.md`：任务前、中、后 158 项异常场景、当前覆盖状态和处置方案。
 - `TASK3_READINESS_CHECKLIST.md`：从离线逻辑到比赛级闭环的完成度清单。
 - `examples/basic.py`：打印一组示例输入和结果。
@@ -321,7 +323,9 @@ Orin 现有的 ROS executor 已收回本仓库：ROS 包元数据和 launch 文�
 `ros2/usv_task3_executor/`，节点源码位于 `usv_task3_executor/`。该 ROS 包在构建时直接
 安装仓库根目录唯一一份 `dock_planner/`，避免现场工作区再维护规划核心副本。把整个仓库
 克隆到 colcon 工作区 `src/` 后，可同时发现 `usv_task3_executor` 和
-`robotx_perception_common` 两个 ROS 包。
+`robotx_perception_common` 两个 ROS 包。统一 Orin 工作区还应由 `robotx_communication`
+提供通用通信适配，由 `usv_state_machine` 提供车辆级 heartbeat；当前 Task3 adapter
+用于接口联调，暂不在 Task3 包外复制一份。
 
 `ned_map_adapter.py` 实现 UAV 建图 NED 到 USV 本地 NED 的纯坐标适配。它使用 UAV
 建图起点和 USV 任务起点的 WGS84 经纬度及椭球高，先计算固定 NED 平移，再把
