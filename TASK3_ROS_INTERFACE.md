@@ -11,6 +11,20 @@
 该节点不直接控制船、PX4、推进器、泵或云台。命令被 ACK 为 `DISPATCHED` 只代表通过校验并
 转发给 Task3 executor，不代表动作完成。
 
+## 1.1 统一 Orin 工作区中的归属
+
+当前实现位于 `usv_task3_executor`，作为 Task3 侧的 ROS 适配器和联调版本。统一 Orin
+工作区的最终归属应保持以下边界：
+
+- `usv_state_machine` 发布整条 USV 的 heartbeat，并把当前任务和 Task3 子状态作为字段；
+- Task3 子状态机产生 `correct_bay` 和 `sprayer_window` 事件，但不单独发布车辆 heartbeat；
+- `robotx_communication` 负责通用 envelope、heartbeat、ACK、fault、task_report 和跨车转发；
+- `task3` 保留 bay 选择、靠泊完成、喷水完成和 14 位 Task3 状态语义。
+
+在通信负责人确认字段前，不要把本文件中的 adapter 再复制成第二个可执行包。最终同步到
+`~/robotx_ws/src` 时，应通过 staging 组合为 `robotx_communication`、`task3` 和
+`usv_state_machine` 三个职责目录。
+
 ## 2. Topic
 
 全部使用 `std_msgs/msg/String`，内容为 UTF-8 JSON。
@@ -212,7 +226,11 @@ Task3 不自行恢复。
 
 ```bash
 cd ~/robotx_ws
-colcon build --packages-select usv_task3_executor
+source /opt/ros/humble/setup.bash
+source ~/robotx_ws/install/setup.bash
+
+# 只有源码或依赖变化后才重新构建；统一工作区不再单独 source livox_ws/mavros_ws
+colcon build --base-paths src --symlink-install --executor sequential
 source install/setup.bash
 ros2 launch usv_task3_executor task3_communication_adapter.launch.py run_id:=42
 ```
