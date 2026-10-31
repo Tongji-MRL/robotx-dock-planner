@@ -19,7 +19,7 @@
   -> LiDAR、TF、定位
   -> semantic map 与 Task3 输入
   -> 单点 goto 低速测试
-  -> dock 数据采集与入口感知
+  -> dock 入口感知在线验证
   -> 云台/泵单独测试
   -> 通信与结果上报
 ```
@@ -37,9 +37,10 @@
 | 优先级 | 目标 | 允许的最终结论 |
 |---:|---|---|
 | P0 | 完成安全、版本、构建、语义地图 API、LiDAR/TF、定位和人工接管检查 | 可以或不可以继续现场测试 |
-| P1 | 采集多个方位的真实 dock 点云、位姿、照片和视频 | `PASS_FOR_DATA_COLLECTION_ONLY` |
-| P2 | 在开阔水面完成 0.5 m 和 1.0 m 单点 goto | 单点控制接口可用 |
-| P3 | 分别完成窗口感知、云台、泵、通信 dry-run | 对应单模块可用 |
+| P1 | 完成 Windows 测试电脑、地面端、移动端、Orin 的网络与通信检查 | 四端链路可用 |
+| P2 | 完成 LiDAR/TF、入口感知、语义地图和 Task3 dry-run | 对应感知/规划输入可用 |
+| P3 | 在开阔水面完成 0.5 m 和 1.0 m 单点 goto | 单点控制接口可用 |
+| P4 | 分别完成窗口感知、云台、泵、通信 dry-run | 对应单模块可用 |
 | 可选 | 分段执行安全圆周、短弧、入口识别和低速靠泊 | 只记录已实际完成的分段 |
 
 P0 或 P1 完成就有有效测试产出。不得为了追求“完整流程”跳过停止条件。
@@ -64,7 +65,7 @@ P0 或 P1 完成就有有效测试产出。不得为了追求“完整流程”�
 - 救生衣、回收绳、长杆或回收艇；
 - Orin 同网段电脑、电源、网线/路由器；
 - 一名人员负责拍摄船体运动和喷水状态；
-- 足够磁盘空间保存 rosbag、日志和照片。
+- 足够磁盘空间保存日志、截图、照片和视频。
 
 任何人进入推进器、水泵喷射方向或船体可能运动的区域时，推进和水泵必须物理断电。
 
@@ -90,35 +91,110 @@ P0 或 P1 完成就有有效测试产出。不得为了追求“完整流程”�
 - 水泵无法关闭、继电器粘连、云台失控；
 - Orin 过热、掉电、CPU/内存异常或网络持续中断。
 
-## 4. 测试记录目录
+## 4. Windows 测试电脑和终端安排
 
-在 SSH 登录后创建本次记录目录：
+### 4.1 三种终端标记
+
+后续每一步都使用以下标记：
+
+| 标记 | 含义 | 是否可以继续输入其他命令 |
+|---|---|---|
+| **常驻** | 正在运行 launch、节点或持续监视；测试期间必须保持 | 不可以，必须新开终端/tmux 窗口 |
+| **监视** | 正在运行 `ping -t`、`topic echo` 等持续命令 | 不可以；需要时用 `Ctrl+C` 结束 |
+| **一次性** | 命令执行后自动回到提示符 | 可以复用同一个终端 |
+
+看到命令一直不返回提示符并不代表卡死。`ros2 launch`、`ros2 run`、无 `--once` 的
+`ros2 topic echo` 和 Windows 的 `ping -t` 都需要保持运行。不要在这些窗口继续粘贴下一条
+命令；应按表中新开窗口。
+
+### 4.2 Windows Terminal 窗口
+
+测试电脑使用 Windows。打开 Windows Terminal/PowerShell，至少建立四个标签页：
+
+| 编号 | 位置 | 类型 | 用途 | 是否一直开着 |
+|---|---|---|---|---|
+| `W0` | Windows PowerShell | 常驻 | SSH 到 Orin，并进入 tmux | 是 |
+| `W1` | Windows PowerShell | 监视 | 持续 ping Orin `192.168.206.66` | 是，所有水上测试期间 |
+| `W2` | Windows PowerShell | 监视 | 持续 ping 地面端 `192.168.206.200` | 是，所有通信测试期间 |
+| `W3` | Windows PowerShell | 监视 | 持续 ping 移动端 `192.168.206.202` | 是，所有通信测试期间 |
+
+`W1`、`W2`、`W3` 分别执行：
+
+```powershell
+ping -t 192.168.206.66
+ping -t 192.168.206.200
+ping -t 192.168.206.202
+```
+
+每条命令各占一个 PowerShell 标签页。使用 `Ctrl+C` 才会停止并显示丢包统计。若测试中
+Orin 连续超时 3 次，遥控安全员立即接管；不得等待 SSH 自行恢复。
+
+### 4.3 Orin 上的 tmux 窗口
+
+在 `W0` 中登录：
+
+```powershell
+ssh robotx@192.168.206.66
+```
+
+登录后先创建记录目录，再创建 tmux。变量必须在启动 tmux 前设置，所有 tmux 窗口才能
+继承同一个 `$TEST_LOG`：
 
 ```bash
 TEST_ID=$(date +%Y%m%d_%H%M%S)
-TEST_LOG=/home/robotx/robotx_logs/task3_field_${TEST_ID}
+export TEST_LOG=/home/robotx/robotx_logs/task3_field_${TEST_ID}
 mkdir -p "$TEST_LOG"
-echo "$TEST_LOG"
+tmux new -s task3_field
 ```
 
-每个终端先加载唯一正式环境：
+使用 `Ctrl+b c` 新建窗口，`Ctrl+b ,` 改名，`Ctrl+b n` 切到下一个窗口，
+`Ctrl+b d` 安全退出但不停止进程。SSH 断开后重新连接并执行：
+
+```bash
+tmux attach -t task3_field
+```
+
+按以下名称建立窗口；没有进入对应阶段时保持空闲：
+
+| tmux 编号 | 名称 | 类型 | 用途 |
+|---:|---|---|---|
+| `T0` | `00_health` | 监视 | 节点、资源、最终控制输出健康状态 |
+| `T1` | `01_mavros` | 常驻 | MAVROS/共享位置启动日志 |
+| `T2` | `02_lidar` | 常驻 | Mid-360 驱动和 TF |
+| `T3` | `03_semantic` | 常驻 | 公共语义地图 |
+| `T4` | `04_task3` | 常驻 | Task3 executor/完整 dry-run |
+| `T5` | `05_goto` | 常驻 | goto/控制器及状态 |
+| `T6` | `06_gimbal_pump` | 常驻 | 窗口、云台和泵节点 |
+| `T7` | `07_comm` | 常驻 | Task3 通信 adapter 和 heartbeat |
+| `T8` | `08_ops` | 一次性 | 查询、构建、`--once` echo，可反复使用 |
+| `T9` | `09_perception` | 常驻 | Task3 LiDAR 入口感知 |
+
+每个新 tmux 窗口第一次使用时都执行：
 
 ```bash
 source /opt/ros/humble/setup.bash
 source /home/robotx/robotx_ws/install/setup.bash
 ```
 
-不要 source `~/livox_ws`、`~/mavros_ws`、历史 staging 或其他旧工作区。
+不要 source `~/livox_ws`、`~/mavros_ws`、历史 staging 或其他旧工作区。除 `T8` 外，启动
+进程后不要在同一窗口输入下一阶段命令。
 
-推荐使用 tmux：
+各阶段需要新增和保留的窗口：
 
-```bash
-tmux new -s task3_field
-```
+| 进入阶段 | 新启动窗口 | 进入下一阶段时继续保留 |
+|---|---|---|
+| B 网络 | `W1`、`W2`、`W3`、`W0/tmux` | 四个都保留 |
+| D 无控制检查 | `T0`；`T4` 启动 executor | `T0` 保留；`T4` 按正文决定停止或保留完整 dry-run |
+| E LiDAR | `T2` | `T2` 保留到入口感知结束 |
+| F 定位 | `T1` | 所有运动测试期间保留 |
+| G 语义地图/Task3 | `T3`、`T4` | Task3 测试期间保留 |
+| H goto | `T5` | 所有运动测试期间保留 |
+| I 入口感知 | `T9` | 入口/靠泊测试期间保留 |
+| J 云台/泵 | `T6` | 仅本阶段和可选靠泊阶段保留 |
+| K 通信 | `T7` | 通信/整链测试期间保留 |
 
-建议窗口：`00_health`、`01_mavros`、`02_lidar`、`03_semantic`、`04_task3`、
-`05_goto`、`06_gimbal_pump`、`07_bag`。使用 `Ctrl+b c` 新建窗口，
-`Ctrl+b ,` 修改窗口名。
+`T8` 始终用于查询，命令结束后可以复用。若某个常驻窗口的进程退出，先停止当前阶段并
+记录错误，不要在该窗口直接改成运行另一个模块来掩盖问题。
 
 ## 5. 阶段 A：上电前物理检查
 
@@ -139,14 +215,51 @@ tmux new -s task3_field
 
 ## 6. 阶段 B：网络、SSH、版本和资源检查
 
-测试电脑先检查网络：
+### 6.1 Windows 测试电脑到三个设备
 
-```bash
-ping -c 3 192.168.206.66
-ssh robotx@192.168.206.66
+在 Windows PowerShell 一次性窗口执行 `ipconfig`，记录测试电脑连接现场网络的 IPv4，记为
+`TEST_PC_IP`。它应与其他设备处于同一现场网段，且不能与 `.66`、`.200`、`.202` 冲突。
+
+先做 30 包检查：
+
+```powershell
+ipconfig
+ping -n 30 192.168.206.66
+ping -n 30 192.168.206.200
+ping -n 30 192.168.206.202
+Test-NetConnection 192.168.206.66 -Port 22
 ```
 
-登录后执行：
+随后按第 4 节启动 `W1`、`W2`、`W3` 三个持续 ping 标签页，再从 `W0` SSH 登录。
+
+通过标准：
+
+- 三个地址均回复，IP 没有冲突或周期性掉线；
+- Orin 的 30 包检查必须 0 丢包，且不能连续出现明显高延迟；
+- 地面端、移动端不能连续丢 3 包；
+- Orin 的 TCP 22 端口成功，SSH 不会频繁断开。
+
+### 6.2 Orin 反向检查测试电脑、地面端和移动端
+
+在 Orin `T8` 执行，把第一条中的地址替换为刚才记录的 Windows IPv4：
+
+```bash
+ping -c 30 TEST_PC_IP
+ping -c 30 192.168.206.200
+ping -c 30 192.168.206.202
+```
+
+如果 Windows 能 ping Orin，但 Orin 不能 ping Windows，先检查 Windows 当前网络是否被识别
+成“公用网络”和 Windows Defender 的 ICMPv4 Echo 入站规则。只放行现场网卡所需规则，
+不要关闭整个防火墙。
+
+若地面端或移动端有终端，再分别从它们 ping `192.168.206.66` 和 `TEST_PC_IP`，完成全双向
+检查；若没有命令终端，至少确认 Windows、Orin 都能 ping 它们，并在第 15 节用 heartbeat/
+ACK 验证应用层的双向通信。单向 ping 成功不能代替应用层 ACK。
+
+### 6.3 Orin 版本和资源
+
+在 Orin `T8` 执行：
 
 ```bash
 hostname
@@ -191,7 +304,8 @@ colcon list --base-paths src | awk '{print $1}' | sort | uniq -d
 
 ## 7. 阶段 C：离线测试和构建
 
-推进器和泵继续断电。
+推进器和泵继续断电。本节全部在 `T8` 执行，均为**一次性命令**；每条结束并重新出现提示符
+后才能执行下一条，不需要新开窗口。
 
 Task3 纯逻辑测试：
 
@@ -236,7 +350,8 @@ Task3 launch。由公共语义地图负责人更新 `robotx_semantic_map` 到包
 
 ## 8. 阶段 D：无控制 ROS 健康检查
 
-推进器和泵仍断电。确认所有终端使用同一 `ROS_DOMAIN_ID`：
+推进器和泵仍断电。在 `T8` 执行以下一次性检查，并确认所有终端使用同一
+`ROS_DOMAIN_ID`：
 
 ```bash
 echo "ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-unset}"
@@ -258,20 +373,25 @@ ros2 topic info /usv/control/cmd_vel --verbose
 
 只启动 Task3 executor，不启动 semantic adapter：
 
+在**新窗口 `T4`** 执行，启动后保持该窗口常驻：
+
 ```bash
 ros2 run usv_task3_executor task3_executor --ros-args -p dry_run:=true
 ```
 
-另一个终端检查：
+回到 `T8` 检查：
 
 ```bash
 ros2 node list | grep usv_task3_executor
 ros2 topic echo --once /tongji_mrl/twave/task3/state
 ```
 
-通过标准：节点进入 `IDLE`，没有车辆控制或泵命令发布。完成后 `Ctrl+C`。
+通过标准：节点进入 `IDLE`，没有车辆控制或泵命令发布。该项完成后切回 `T4`，按
+`Ctrl+C` 停止 executor，确认提示符已经返回，才能在 `T4` 启动下一条 launch。
 
 公共语义地图 API 修复后，再运行完整 dry-run：
+
+仍在空闲的 `T4` 执行并保持常驻：
 
 ```bash
 ros2 launch usv_task3_executor task3_executor.launch.py \
@@ -280,9 +400,15 @@ ros2 launch usv_task3_executor task3_executor.launch.py \
 
 通过标准：executor 和 semantic adapter 都保持运行，无 traceback。
 
+在 `T0` 启动资源和节点监视，之后保持该窗口开启：
+
+```bash
+watch -n 2 'date; uptime; free -h | head -n 2; echo ROS_NODES; ros2 node list | sort'
+```
+
 ## 9. 阶段 E：LiDAR、TF 和点云检查
 
-船仍在岸上支架。启动 Mid-360：
+船仍在岸上支架。在**新窗口 `T2`** 启动 Mid-360；launch 运行期间 `T2` 必须保持常驻：
 
 ```bash
 ros2 launch robotx_perception_common task3_lidar_bringup.launch.py \
@@ -290,7 +416,7 @@ ros2 launch robotx_perception_common task3_lidar_bringup.launch.py \
   lidar_roll:=0.0 lidar_pitch:=0.0 lidar_yaw:=0.0
 ```
 
-另一个终端检查：
+回到 `T8` 执行一次性检查：
 
 ```bash
 ros2 node list | grep -E 'livox|task3_lidar'
@@ -325,7 +451,9 @@ timeout 5s ros2 run tf2_ros tf2_echo base_link livox_frame
 
 ## 10. 阶段 F：MAVROS、GPS、NED 和 heading
 
-本阶段仍不发送 setpoint。启动方式由飞控负责人给出，随后只读检查：
+本阶段仍不发送 setpoint。若 MAVROS/共享位置尚未启动，由飞控负责人在**新窗口 `T1`**
+启动，并保持 `T1` 常驻；不要把查询命令粘贴进正在运行 launch 的 `T1`。随后在 `T8` 做
+只读检查：
 
 ```bash
 ros2 topic echo --once /mavros/state
@@ -352,20 +480,22 @@ ros2 topic echo --once /tongji_mrl/twave/ned_position
 
 只有第 7 节 semantic map API 已通过才执行。
 
-启动公共语义地图：
+在**新窗口 `T3`** 启动公共语义地图，保持 `T3` 常驻：
 
 ```bash
 ros2 launch robotx_semantic_map semantic_map.launch.py
 ```
 
-启动 Task3 dry-run：
+如果 `T4` 里已有第 8 节完整 dry-run，则不要重复启动。否则在**新窗口 `T4`**启动并保持
+常驻：
 
 ```bash
 ros2 launch usv_task3_executor task3_executor.launch.py \
   platform_id:=0 dry_run:=true
 ```
 
-观察：
+在 `T8` 依次执行一次性观察；最后一条没有 `--once`，属于持续监视，需要看完后按
+`Ctrl+C`，不要直接继续粘贴命令：
 
 ```bash
 ros2 topic echo --once /task/semantic_map
@@ -400,15 +530,17 @@ ros2 topic pub --once --qos-durability transient_local \
 测试步骤：
 
 1. 船先保持手动模式，在开阔水面低速验证左右推进方向。
-2. 读取当前 `/mavros/local_position/odom`，由控制器负责人确认 goto 使用的 frame、单位和目标格式。
+2. 由控制器负责人在**新窗口 `T5`**启动 goto/控制器并保持常驻；所有接口查询在 `T8`
+   执行，不要输入到 `T5` 的运行日志中。
+3. 读取当前 `/mavros/local_position/odom`，由控制器负责人确认 goto 使用的 frame、单位和目标格式。
    先执行 `ros2 topic info /safe_passage/goto/target --verbose` 和
    `ros2 topic info /safe_passage/goto/status --verbose`；类型或 topic 不一致时，以已部署控制器
    的源码和负责人确认结果为准。
-3. 第一个目标只设为当前位置前方 `0.5 m`，最高速度使用控制器最低安全配置。
-4. 发送目标前，观察员确认路径无障碍；安全员口头复述“可接管”。
-5. 发送后记录目标、实际轨迹、最大误差、到达时间和 status。
-6. 目标到达后立即回到人工/STOP，检查是否仍有非零控制输出。
-7. 依次测试 `0.5 m` 直行、低速转向、`1.0 m` 直行；任一失败不增加距离。
+4. 第一个目标只设为当前位置前方 `0.5 m`，最高速度使用控制器最低安全配置。
+5. 发送目标前，观察员确认路径无障碍；安全员口头复述“可接管”。
+6. 发送后记录目标、实际轨迹、最大误差、到达时间和 status。
+7. 目标到达后立即回到人工/STOP，检查是否仍有非零控制输出。
+8. 依次测试 `0.5 m` 直行、低速转向、`1.0 m` 直行；任一失败不增加距离。
 
 goto 接口预期：
 
@@ -431,59 +563,46 @@ NED 数值误发到 ENU/local topic。发送前把最终命令复制进 `$TEST_L
 | 网络断开 | 安全员立即接管；不得等待 SSH 自动恢复 |
 | 多个 cmd_vel publisher | 立即停止所有自主节点，保留唯一仲裁出口 |
 
-## 13. 阶段 I：dock 周边 LiDAR 数据采集
+## 13. 阶段 I：dock 入口感知在线验证
 
-本阶段的主要目标是采数据，不要求一次识别成功。
+真实 LiDAR 数据已经采集过，本阶段不再录 rosbag。目标只是确认现场实时链路能产生可解释
+的入口结果。
 
-建议位置：
-
-1. 正对三个 bay 的中间位置；
-2. dock 左前方约 30°；
-3. dock 右前方约 30°；
-4. 安全圆周上每隔固定角度停车一次；
-5. 至少覆盖三个入口可见位置和入口被遮挡位置。
-
-每个位置先停车稳定 5 秒，再录 15–30 秒：
-
-```bash
-ros2 bag record -o "$TEST_LOG/dock_view_01" \
-  /livox/lidar \
-  /tf /tf_static \
-  /mavros/local_position/odom \
-  /mavros/global_position/global \
-  /tongji_mrl/twave/ned_position \
-  /tongji_mrl/twave/task3/coarse_dock \
-  /tongji_mrl/twave/task3/dock_perception
-```
-
-每段 bag 同时记录：船到 dock 的估计距离、船艏朝向、可见入口、天气、浪流、照片编号。
-文件录完后执行：
-
-```bash
-ros2 bag info "$TEST_LOG/dock_view_01"
-du -sh "$TEST_LOG/dock_view_01"
-```
-
-入口感知只读检查：
+`T2` 中的 Mid-360 bringup 必须仍在运行。在**新窗口 `T9`**启动入口感知；该进程运行
+期间 `T9` 必须常驻：
 
 ```bash
 ros2 launch robotx_perception_common task3_lidar_perception.launch.py \
   input_topic:=/livox/lidar input_format:=livox_custom
+```
+
+不要覆盖正在运行该 launch 的窗口。切回空闲的 `T8`，执行持续观察：
+
+```bash
 ros2 topic echo /tongji_mrl/twave/task3/dock_perception
 ```
 
-上面的 `livox_custom` 对应当前 Orin 实测的
-`livox_ros_driver2/msg/CustomMsg`。如果第 9 节现场检查显示输入已经改为
+看完后用 `Ctrl+C` 结束 echo；感知 launch 保持运行。上面的 `livox_custom` 对应当前 Orin
+实测的 `livox_ros_driver2/msg/CustomMsg`。如果第 9 节现场检查显示输入已经改为
 `sensor_msgs/msg/PointCloud2`，把参数改成 `input_format:=pointcloud2`；消息类型与参数不一致
 时感知结果无效。
 
-通过标准：输出包含入口中心、朝内 heading、confidence、timestamp 和 valid；无入口时应
-输出 invalid/不发布，而不是猜入口。入口方向与照片明显相反时，先查 TF 和 heading，
-不要现场盲目调算法阈值。
+建议在船静止且安全的情况下验证三个视角：正对 dock、左前方、右前方。每个视角只记录
+终端截图、船体/dock 照片和以下结果，不需要重新采点云：
+
+- 是否输出 `valid`；
+- entrance center 是否位于可见入口附近；
+- heading 是否朝向 dock 内部；
+- confidence 是否稳定，timestamp 是否持续更新；
+- 看不到入口时是否正确 invalid/不发布，而不是猜入口。
+
+入口方向与照片明显相反时，先查 TF、船体 heading、粗中心和输入格式，不要现场盲目调
+算法阈值。没有输出时先检查粗中心与 NED pose 是否都在更新。
 
 ## 14. 阶段 J：云台、窗口感知和水泵
 
-先只读检查接口：
+由云台负责人在**新窗口 `T6`**启动窗口/云台/泵节点并保持常驻。以下只读查询在 `T8`
+执行，不要输入正在显示控制日志的 `T6`：
 
 ```bash
 ros2 topic info /robotx/perception/sprayer/active_window_3d --verbose
@@ -519,13 +638,13 @@ ros2 interface show robotx_gimbal_interfaces/srv/SetPump
 
 ## 15. 阶段 K：通信和颜色序列 dry-run
 
-不启动车辆控制。只启动 Task3 通信 adapter：
+不启动车辆控制。在**新窗口 `T7`**启动 Task3 通信 adapter，并保持常驻：
 
 ```bash
 ros2 launch usv_task3_executor task3_communication_adapter.launch.py run_id:=42
 ```
 
-检查 topic 和订阅者：
+在 `T8` 检查 topic 和订阅者：
 
 ```bash
 ros2 topic info /tongji_mrl/twave/task_cmd --verbose
@@ -537,13 +656,16 @@ ros2 topic info /tongji_mrl/tsky/heartbeat --verbose
 
 验证内容：
 
+- `W1`、`W2`、`W3` 没有连续超时；
+- 地面端 `192.168.206.200` 和移动端 `192.168.206.202` 的实际应用均在线；
 - `begin` 只转发一次，重复命令不会重复执行；
 - `end` 转成 SAFE_STOP/ACK，不会被误报为 TASK3_FINISH；
 - `tin_color`、`circle_color` 顺序和颜色编码与 UAV/OCS 一致；
 - heartbeat 中断超过约 3 秒能检测，恢复后状态可解释；
 - docking 与 firefighting 完成必须来自权威条件，不由单帧颜色代替。
 
-无人订阅或没有 ACK 时，只记录“未完成通信闭环”，不能宣布 Task3 完成。
+无人订阅、没有 ACK，或只能 ping 通但收不到 heartbeat 时，只记录“网络可达、通信闭环未完成”，
+不能宣布 Task3 完成。ping 只证明 IP 可达，不能证明 ROS/应用消息已经互通。
 
 ## 16. 现场可选的分段靠泊测试
 
@@ -566,14 +688,18 @@ ros2 topic info /tongji_mrl/tsky/heartbeat --verbose
 
 | 错误/现象 | 最可能原因 | 处理 |
 |---|---|---|
+| PowerShell 提示找不到 `ssh` | Windows OpenSSH Client 未启用 | 在 Windows“可选功能”启用 OpenSSH Client，或使用已配置的 VS Code Remote SSH；不要临时关闭安全设置 |
 | SSH 连接失败 | 不同网段、Wi-Fi/路由器、Orin 未上电 | ping `192.168.206.66`，检查本机 IP 和网线；不要反复重启整船 |
+| Windows 能 ping Orin，Orin 不能 ping Windows | Windows 防火墙/公用网络规则 | 只放行现场网卡 ICMPv4 Echo；不要关闭整个防火墙 |
+| 地面端或移动端连续丢包 | 现场 AP 覆盖、设备休眠或 IP 冲突 | 暂停通信/运动测试，靠近 AP、关闭省电并检查静态 IP |
+| ping 正常但没有 ACK/heartbeat | 应用未启动、端口/DDS/domain 不一致 | 检查应用进程、ROS domain、topic/type；不能按通信成功处理 |
 | `ros2` 找不到包 | source 了错误工作区 | 新终端只 source ROS Humble 和正式 `install/setup.bash` |
 | duplicate package | 旧源码或备份仍在 `src` | 停止构建，把重复目录移到 `robotx_backups` 后复查 |
 | Task3 build 报旧 launch 不存在 | 旧 build/install 清单残留 | 只备份该包的 build/install 产物，再单包构建 |
 | `parse_snapshot` ImportError | 公共 semantic map 版本过旧 | 更新公共包、重新构建；不在 Task3 复制实现 |
 | executor 启动后一直 IDLE | 没有有效粗中心/当前姿态/开始事件 | 检查 semantic map、NED、heading 和状态机命令 |
 | LiDAR topic 不存在 | 驱动/供电/网卡配置 | 检查节点、电源、IP 和启动配置 |
-| LiDAR 有数据但无入口 | TF、粗中心、heading、ROI 或视角 | 先录 bag 和照片；核对坐标后再调参数 |
+| LiDAR 有数据但无入口 | TF、粗中心、heading、输入格式、ROI 或视角 | 保存终端截图和现场照片；核对坐标后再调参数 |
 | TF y 仍为 0 | 使用了旧默认参数 | 用 `lidar_y:=0.10` 启动并更新公共感知配置 |
 | NED 数据 stale/invalid | GPS、时钟或共享位置节点 | 停止自主测试，检查 GPS、系统时间和节点状态 |
 | goto 无响应 | 控制器未启动、frame 错、无控制权 | 人工停止，检查 target/status 和仲裁 owner |
@@ -581,26 +707,41 @@ ros2 topic info /tongji_mrl/tsky/heartbeat --verbose
 | `/cmd_vel` 多发布者 | 多控制器同时在线 | 停止所有自主节点，只保留唯一仲裁输出 |
 | 泵无法关闭 | service/继电器/多发布者故障 | 物理断泵电源，结束测试并标记硬件故障 |
 | 颜色序列无人接收 | 通信模块/订阅者/协议不一致 | 保存消息和 topic info，不宣称完成 |
-| rosbag 写失败 | 磁盘满或权限 | 停止 bag，检查 `df -h`，不要删除唯一原始数据 |
 | 节点崩溃 | 依赖、消息类型或版本不一致 | 保留 traceback、commit、topic list；回到上一安全阶段 |
 
 ## 18. 测试结束和数据交接
 
 结束顺序：
 
-1. 停止 Task3、goto、感知和通信节点；
+1. 遥控切人工/安全模式，确认推进零输出；
 2. 确认泵 OFF，并物理断泵电源；
-3. 切人工/安全模式，确认推进零输出；
-4. 停止 rosbag，执行 `ros2 bag info`；
-5. 保存 topic/service 列表、TF、版本、参数、终端日志、照片和视频；
-6. 船上岸后再关闭 LiDAR、飞控和 Orin；
-7. 不删除失败数据，失败数据对定位接口问题最有价值。
+3. 在 `T8` 保存各窗口最近输出：
+
+   ```bash
+   for w in 00_health 01_mavros 02_lidar 03_semantic 04_task3 05_goto \
+            06_gimbal_pump 07_comm 09_perception; do
+     tmux capture-pane -p -S -2000 -t "task3_field:$w" \
+       > "$TEST_LOG/${w}.txt" 2>/dev/null || true
+   done
+   ```
+
+4. 依次在 `T5` 停 goto/控制器、`T4` 停 Task3、`T7` 停通信、`T6` 停云台/泵逻辑、
+   `T9` 停入口感知、`T3` 停语义地图；每个窗口使用一次 `Ctrl+C` 并等待进程正常退出；
+5. 船体已经由人工控制稳定后，再在 `T2` 停 LiDAR、`T1` 停 MAVROS/共享位置、`T0` 停监视；
+6. 保存 topic/service 列表、TF、版本、参数、终端截图、照片和视频；
+7. 在 `W1`、`W2`、`W3` 分别按 `Ctrl+C`，截图保存三个地址的最终丢包统计；
+8. 船上岸后再关闭飞控和 Orin；
+9. 不删除失败日志，失败信息对定位接口问题最有价值。
 
 现场结果至少记录：
 
 | 项目 | 结果/数值 |
 |---|---|
 | 测试日期、地点、人员 |  |
+| Windows 测试电脑 IPv4 |  |
+| Orin `.66` 丢包/延迟 |  |
+| 地面端 `.200` 丢包/延迟、ACK |  |
+| 移动端 `.202` 丢包/延迟、heartbeat |  |
 | Task3 commit |  |
 | ROS_DOMAIN_ID |  |
 | LiDAR topic/type/frequency |  |
@@ -609,7 +750,6 @@ ros2 topic info /tongji_mrl/tsky/heartbeat --verbose
 | NED frame、heading 来源 |  |
 | goto 0.5 m/1.0 m 误差 |  |
 | 可见 dock/bay 和照片编号 |  |
-| bag 路径与大小 |  |
 | 泵开/关反馈和最大持续时间 |  |
 | 通信 ACK 结果 |  |
 | 未通过项、错误日志、处理人 |  |
@@ -617,7 +757,7 @@ ros2 topic info /tongji_mrl/tsky/heartbeat --verbose
 最终结论只能选择：
 
 - `PASS_FOR_NEXT_STAGE`：仅表示可以进入下一阶段；
-- `PASS_FOR_DATA_COLLECTION_ONLY`：只允许采数据，不允许自主控制；
+- `PASS_FOR_STATIC_CHECKS_ONLY`：网络/接口/感知可检查，不允许自主控制；
 - `FAIL_AND_HOLD`：保持人工/停止状态，修复后重测。
 
 没有完整日志、照片和明确通过标准时，不填写“整链成功”。
