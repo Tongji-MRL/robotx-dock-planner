@@ -160,6 +160,23 @@ class Task3SubFSMBridgeTests(unittest.TestCase):
         self.assertEqual(self.bridge.checkpoint.checkpoint_id, checkpoint_id)
         self.assertEqual(self.bridge.task3_step, Task3Step.SEARCH_DOCK)
 
+    def test_safe_stop_ack_is_not_reported_as_an_error(self):
+        report = self.bridge.handle_master_command({
+            "command_id": "end-1",
+            "run_id": 42,
+            "command": "SAFE_STOP",
+            "payload": {},
+        })
+        self.assertEqual(report.status.error, CommonError.NONE)
+        self.assertEqual(report.payload["fsm_progress"], "TASK3_END_ACK")
+        self.assertTrue(report.payload["return_to_start_required"])
+
+    def test_task3_completion_carries_fsm_finish_progress(self):
+        report = self.bridge.report_task3_complete(result={"bay_id": 2})
+        self.assertEqual(report.message_type, "TASK3_COMPLETE")
+        self.assertEqual(report.payload["fsm_progress"], "TASK3_FINISH")
+        self.assertEqual(report.status.command, PlannerCommand.REPORT_TASK_COMPLETE)
+
     def test_every_task3_step_has_an_explicit_task4_resume_rule(self):
         expected = {
             Task3Step.READY: (Task3Step.READY, ResumePolicy.CONTINUE_SAME_STEP),

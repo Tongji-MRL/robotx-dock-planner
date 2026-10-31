@@ -1,15 +1,19 @@
-# Task3 子状态机与总规划器 ROS 2 接口
+# Task3 子状态机与 FSM 主规划器 ROS 2 接口
 
-更新时间：2026-10-14  
-协议版本：`task3-ros-v1`
+更新时间：2026-10-18
+外部协议：FSM `mission_planner_node` legacy JSON
+
+主规划器以 `Tongji-MRL/FSM` 的 `mission_planner_node.py` 为准。Task3 ROS 边界使用
+`std_msgs/msg/String`，内容固定为 `vehicle/task/progress/error/command` 字段；原来的
+`task3-ros-v1` envelope 只保留为纯 Python 内部测试结构，不作为主规划器线上消息格式。
 
 ## 1. 责任边界
 
-`task3_communication_adapter` 负责 JSON 校验、编码、去重、Task3 progress、正确泊位报告、
-喷水窗口报告、命令 ACK/转发以及 UAV/USV heartbeat 超时监测。
+`task3_communication_adapter` 负责按 FSM 格式校验和转换 Task3 progress、正确泊位结果、
+喷水窗口结果、命令 ACK/转发以及 UAV/USV heartbeat 超时监测。
 
-该节点不直接控制船、PX4、推进器、泵或云台。命令被 ACK 为 `DISPATCHED` 只代表通过校验并
-转发给 Task3 executor，不代表动作完成。
+该节点不直接控制船、PX4、推进器、泵或云台。FSM progress 中的 `*_ACK` 只代表命令通过
+校验并转发给 Task3 executor，不代表动作完成。
 
 ## 1.1 统一 Orin 工作区中的归属
 
@@ -18,7 +22,7 @@
 
 - `usv_state_machine` 发布整条 USV 的 heartbeat，并把当前任务和 Task3 子状态作为字段；
 - Task3 子状态机产生 `correct_bay` 和 `sprayer_window` 事件，但不单独发布车辆 heartbeat；
-- `robotx_communication` 负责通用 envelope、heartbeat、ACK、fault、task_report 和跨车转发；
+- `robotx_communication` 负责通用转发；FSM 主规划器负责本组 `task_cmd`、`progress`、`result`、`status` 和 `fault`；
 - `task3` 保留 bay 选择、靠泊完成、喷水完成和 14 位 Task3 状态语义。
 
 在通信负责人确认字段前，不要把本文件中的 adapter 再复制成第二个可执行包。最终同步到
@@ -32,14 +36,14 @@
 | Topic | 方向 | 频率/时机 | 内容 |
 |---|---|---|---|
 | `/tongji_mrl/twave/task_cmd` | 总规划器 → adapter | 事件触发 | Task3/Task4 命令 |
-| `/tongji_mrl/twave/task_ack` | adapter → 总规划器 | 每条有效命令 | `DISPATCHED` 或 `DUPLICATE_IGNORED` |
+| `/tongji_mrl/twave/task_ack` | adapter → 本地诊断 | 每条有效命令 | FSM progress ACK 的镜像 |
 | `/tongji_mrl/twave/task3/control_command` | adapter → Task3 executor | 每条首次有效命令 | 规范化命令；实际执行方必须另行报告结果 |
 | `/tongji_mrl/twave/task3/state` | Task3 executor → adapter | 当前 1 Hz | executor 状态 |
-| `/tongji_mrl/twave/progress` | adapter → 总规划器 | 状态/窗口变化时 | 14 位状态码和结构化详情 |
+| `/tongji_mrl/twave/progress` | adapter → FSM | 状态/窗口变化时 | `vehicle/task/progress/error` JSON |
 | `/tongji_mrl/twave/task3/correct_bay` | Task3 流程 → adapter | bay 确认/靠泊确认时 | 正确泊位权威输入 |
 | `/tongji_mrl/twave/task3/sprayer_window` | 喷水流程 → adapter | 窗口状态变化时 | RED/GREEN、泵状态、绿色确认时长 |
-| `/tongji_mrl/twave/task_report` | adapter → 总规划器 | 权威完成事件 | docking/firefighting official report |
-| `/tongji_mrl/twave/fault` | adapter → 总规划器 | heartbeat 丢失/恢复 | 双机 heartbeat fault |
+| `/tongji_mrl/twave/result` | adapter → FSM | 权威完成事件 | docking/firefighting result JSON |
+| `/tongji_mrl/twave/checkpoint` | Task3 流程 → FSM | Task4 抢占前 | 当前任务断点 |
 | `/tongji_mrl/twave/heartbeat` | USV 状态机 → adapter | 2 Hz | T-Wave 车辆 heartbeat |
 | `/tongji_mrl/tsky/heartbeat` | UAV 状态机 → adapter | 2 Hz | T-Sky 车辆 heartbeat |
 
@@ -48,38 +52,56 @@ heartbeat。默认超过 3 秒未收到视为失联；启动后默认有 5 秒�
 
 ## 3. Progress
 
-现有 `/tongji_mrl/twave/task3/state` 会映射到冻结的 14 位状态码。例如：
+现有 `/tongji_mrl/twave/task3/state` 会映射为 FSM 可直接判断的 progress。例如：
 
 ```json
 {
-  "protocol_version": "task3-ros-v1",
-  "message_id": "uuid",
-  "run_id": 42,
-  "sequence": 8,
-  "sent_at_unix_ms": 1791900000000,
-  "source": "T-Wave",
+  "vehicle": "usv",
   "task": "TASK3",
-  "kind": "progress",
-  "message_type": "TASK3_PROGRESS",
-  "status_code": 12672,
-  "status_bits": "1 10 0011 0000 000",
-  "status": {
-    "vehicle": "USV",
-    "task": "TASK3",
-    "step": "SEARCH_DOCK",
-    "error": "NONE",
-    "command": "NONE"
-  },
-  "payload": {
-    "executor_state": "SEARCH_DOCK",
-    "ready_for_task_logic": true,
-    "dry_run": false,
-    "detail": ""
-  }
+  "progress": "TASK3_SEARCH_DOCK",
+  "error": null,
+  "detail": "",
+  "retry": null
 }
 ```
 
-完整步骤和 fault 见 `TASK3_COMMUNICATION_PROTOCOL.md` 与 `TASK3_ERROR_CATALOG.md`。
+可恢复的感知、搜索和颜色确认问题不会立即填充 `error`。Task3 executor 会在当前步骤
+内部重试，期间只在状态消息中带 `retry`，例如：
+
+```json
+"retry": {
+  "operation": "bay_color",
+  "attempt": 2,
+  "max_attempts": 3,
+  "elapsed_s": 4.2,
+  "timeout_s": 30.0,
+  "reason": "bay color confidence is below threshold"
+}
+```
+
+只有达到 `max_attempts` 或 `timeout_s` 后，executor 才进入 `ERROR`，并把最终错误写入
+`error`；FSM 主规划器随后按失败流程处理。输入格式错误、坐标系/边界安全错误等不可安全
+重试的问题仍会立即进入 `ERROR`。默认值可通过 executor 参数
+`retry_max_attempts`（3）和 `retry_operation_timeout_s`（30 秒）调整。
+
+Task3 完成时，内部状态 `FINISHED`/`COMPLETE` 统一转换为 FSM 要求的：
+
+```json
+{
+  "vehicle": "usv",
+  "task": "TASK3",
+  "progress": "TASK3_FINISH",
+  "error": null
+}
+```
+
+不能把 `TASK3_COMPLETE` 当作对外完成状态；`TASK3_COMPLETE` 仅可作为内部结构化报告名。
+FSM 只有在 UAV 和 USV 都收到 `TASK3_FINISH` 且 `error` 为 `null` 时，才会把总状态推进到
+`COMPLETE`。
+
+14 位状态码仍保留在 Task3 内部日志和错误目录中；FSM 主规划器只解析上述 progress
+字符串和 `error` 字段。完整步骤和错误目录见 `TASK3_COMMUNICATION_PROTOCOL.md` 与
+`TASK3_ERROR_CATALOG.md`。
 
 ## 4. 正确泊位信息
 
@@ -106,7 +128,7 @@ Task3 流程在确认正确 bay 后发布，并在最终靠泊确认后以同一
 - `docking_confirmed=true` 时除 progress 外再生成正式 docking report；
 - 感知到绿色 bay、入口对齐或进入入口均不能代替最终靠泊确认。
 
-输出到 `/tongji_mrl/twave/task_report` 的核心字段：
+输出到 `/tongji_mrl/twave/result` 的核心字段：
 
 ```json
 {
@@ -202,25 +224,45 @@ Topic 与 `vehicle_id` 必须匹配。未知数据使用 `null`，不能用 0 �
 
 ## 7. Command、ACK 与 Task4 恢复
 
-推荐命令：
+主规划器实际发送的命令以 FSM 节点为准：
 
 ```json
 {
-  "command_id": "resume-17",
-  "run_id": 42,
-  "command": "RESUME_TASK3",
-  "payload": {
-    "checkpoint_id": "checkpoint-7"
+  "vehicle": "usv",
+  "task": "TASK3",
+  "progress": null,
+  "error": null,
+  "command": "begin"
+}
+```
+
+Task4 使用：
+
+```json
+{
+  "vehicle": "usv",
+  "task": "TASK4",
+  "progress": null,
+  "error": null,
+  "command": {
+    "type": "TASK4_BEGIN",
+    "command_seq": 17,
+    "target_vehicle": "usv",
+    "position": {"frame_id": "ned", "north": 1.0, "east": 2.0}
   }
 }
 ```
 
-也兼容当前 `task_id/action/command_seq/parameters` 旧格式。首次有效命令被转发到
-`/tongji_mrl/twave/task3/control_command`；重复 `command_id` 不重复转发。
+总规划器发送 `command="end"` 时，Task3 adapter 将其转换为 `SAFE_STOP`，并回传
+`TASK3_END_ACK`。这不是 `TASK3_FINISH`：子状态机需要先取消当前导航、关闭水泵、停止云台，
+再由导航/控制模块执行返航；如果返航失败，才上报最终错误供总规划器判断是否需要外部救援。
 
-Task4 到达目标后，Task3 必须保持 `WAIT_RESUME`。只有总规划器选择继续 Task3 并下发
-`RESUME_TASK3(checkpoint_id)` 后才恢复。总规划器选择 Task1 时，Task3 checkpoint 保留，
-Task3 不自行恢复。
+Task3 的 `begin`、`resume`、`end` 分别映射到内部的开始、恢复和安全停止命令。首次有效
+命令被转发到 `/tongji_mrl/twave/task3/control_command`；重复的 FSM 命令不重复转发。
+
+Task4 到达目标后，Task3 必须保持 `WAIT_RESUME`。只有总规划器选择继续 Task3 并向
+`/tongji_mrl/twave/task_cmd` 下发 `task=TASK3, command=resume` 后才恢复；恢复时携带
+checkpoint 的 `progress` 字段。总规划器选择 Task1 时，Task3 checkpoint 保留，Task3 不自行恢复。
 
 ## 8. 构建和 dry-run 联调
 

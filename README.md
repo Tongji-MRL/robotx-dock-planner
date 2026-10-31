@@ -59,8 +59,12 @@ result = planner.plan(
 - `dock_planner/watering.py`：停泊后的瞄准、喷水和绿色确认状态逻辑；不直接控制硬件。
 - `dock_planner/bay_search.py`：入口中心关联、bay 去重、颜色拒绝和 terminal 失败记忆。
 - `dock_planner/task3_status_codec.py`：Task3 14 位状态码、固定错误目录和恢复动作解码。
+- Task3 executor 对感知、搜索和颜色确认等暂态故障先在当前步骤内限次/限时重试，只有
+  重试耗尽才发布最终 `error` 并进入 `ERROR`；`retry_max_attempts` 和
+  `retry_operation_timeout_s` 可作为 ROS 参数调整。
 - `dock_planner/task3_subfsm_bridge.py`：Task3 子状态机与总规划器通信、Task4 抢占和恢复逻辑。
 - `dock_planner/task3_ros_contract.py`：Task3 侧 progress/report/command/ACK、正确泊位、喷水窗口和双机 heartbeat 的纯 JSON 契约；统一 Orin 中的通用通信归 `robotx_communication`，车辆 heartbeat 由 `usv_state_machine` 发布。
+- `dock_planner/fsm_contract.py`：对固定 FSM `mission_planner_node.py` 的 ROS legacy JSON 适配，线上字段为 `vehicle/task/progress/error/command`，不把内部 14 位状态码直接发给主规划器。
 - `dock_planner/__init__.py`：公开导入接口。
 - `TASK3_COMMUNICATION_PROTOCOL.md`：Task3 步骤、全部错误码、command、跨机数据和 Task4 恢复协议。
 - `TASK3_ERROR_CATALOG.md`：Task3 128 个步骤特有错误及通用错误的独立查表文档。
@@ -315,8 +319,9 @@ LiDAR 自身坐标系中。若需要全局 NED 位置，还要继续使用当时
 `research/dock_lidar_prototype/run_recorded_frame.py` 完成。
 
 面向 Orin 的公共 ROS 2 包模板位于
-`ros2/robotx_perception_common/`。它包含 Task1 和 Task3 共用的 PointCloud2 解析、
-`livox_frame → base_link` 转换，以及 `task3_lidar_bringup.launch.py`。部署时将该目录
+`ros2/robotx_perception_common/`。它包含 Task1 和 Task3 共用的 PointCloud2/ Livox
+CustomMsg 解析、`livox_frame → base_link` 转换，以及 `task3_lidar_bringup.launch.py`。
+部署时将该目录
 随本仓库放入 Orin 工作区的 `src/` 后构建；Task3 的 dock 入口识别仍留在 Task3 包中。
 
 Orin 现有的 ROS executor 已收回本仓库：ROS 包元数据和 launch 文件位于

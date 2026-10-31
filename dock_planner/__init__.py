@@ -19,7 +19,7 @@ from .integration import (
     parse_dock_vision_json, parse_logistics_request_json, prepare_terminal_plan_input,
 )
 from .ros_twist_adapter import DEFAULT_RATE_HZ, DEFAULT_TOPIC, RosTwistAdapter, to_twist_message
-from .task3_flow import Task3FlowManager, Task3FlowState
+from .task3_flow import Task3FlowManager, Task3FlowState, Task3RetryConfig
 from .dock_search import (
     CircularDockSearchConfig, CircularDockSearchPlan, plan_circular_dock_search,
 )
@@ -94,6 +94,16 @@ from .task3_ros_contract import (
     Task3RosMessageFactory, normalize_task_command,
     validate_vehicle_heartbeat,
 )
+from .fsm_contract import (
+    FSM_TASK3_FINISH_PROGRESS,
+    correct_bay_to_fsm_progress,
+    docking_result_to_fsm_message,
+    executor_state_to_fsm_progress,
+    firefighting_result_to_fsm_message,
+    normalize_fsm_task_command,
+    sprayer_window_to_fsm_progress,
+    safe_stop_ack_progress,
+)
 
 __all__ = [
     "DockPlanner", "DockSpec", "PlannerConfig", "PlanResult", "PlanStatus", "Pose2D",
@@ -113,7 +123,7 @@ __all__ = [
     "GlobalApproachPlanner",
     "GlobalApproachResult", "GlobalApproachStatus", "DEFAULT_TOPIC", "DEFAULT_RATE_HZ",
     "RosTwistAdapter", "to_twist_message",
-    "Task3FlowManager", "Task3FlowState",
+    "Task3FlowManager", "Task3FlowState", "Task3RetryConfig",
     "CircularDockSearchConfig", "CircularDockSearchPlan", "plan_circular_dock_search",
     "DockPerceptionConfig", "DockOpeningCandidate",
     "DockPerceptionDebugResult", "NumpyDockPerception", "OrientedBoundingBox2D", "SyntheticDockConfig",
@@ -159,4 +169,8 @@ __all__ = [
     "CorrectBayInfo", "HeartbeatMonitor", "SprayerWindowInfo",
     "Task3RosMessageFactory", "normalize_task_command",
     "validate_vehicle_heartbeat",
+    "FSM_TASK3_FINISH_PROGRESS", "normalize_fsm_task_command", "executor_state_to_fsm_progress",
+    "correct_bay_to_fsm_progress", "docking_result_to_fsm_message",
+    "sprayer_window_to_fsm_progress", "firefighting_result_to_fsm_message",
+    "safe_stop_ack_progress",
 ]

@@ -19,6 +19,7 @@ from dock_planner import (
     PlannerConfig,
     Pose2D,
     Task3FlowManager,
+    Task3RetryConfig,
     Task3FlowState,
 )
 
@@ -44,6 +45,8 @@ class Task3Executor(Node):
         self.declare_parameter("bay_depth_m", 6.0)
         self.declare_parameter("approach_distance_m", 5.0)
         self.declare_parameter("stop_distance_inside_m", 1.0)
+        self.declare_parameter("retry_max_attempts", 3)
+        self.declare_parameter("retry_operation_timeout_s", 30.0)
         self.flow_manager = Task3FlowManager(
             DockPlanner(
                 PlannerConfig(
@@ -54,6 +57,12 @@ class Task3Executor(Node):
             target_color=str(self.get_parameter("target_color").value),
             bay_width=float(self.get_parameter("bay_width_m").value),
             bay_depth=float(self.get_parameter("bay_depth_m").value),
+            retry_config=Task3RetryConfig(
+                max_attempts=int(self.get_parameter("retry_max_attempts").value),
+                operation_timeout_s=float(
+                    self.get_parameter("retry_operation_timeout_s").value
+                ),
+            ),
         )
         self.dry_run = bool(self.get_parameter("dry_run").value)
         self.latest_mock_coarse_dock_center: Optional[CoarseDockCenterObservationNED] = None
@@ -274,6 +283,8 @@ class Task3Executor(Node):
                 "position_ned_m": self.latest_position_ned_m,
                 "frame_id": self.latest_frame_id,
                 "dry_run": self.dry_run,
+                "error": self.flow_manager.error,
+                "retry": self.flow_manager.retry_status,
                 "mock_coarse_dock_center": (
                     None
                     if self.latest_mock_coarse_dock_center is None
