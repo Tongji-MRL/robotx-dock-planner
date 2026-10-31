@@ -83,24 +83,26 @@ class Task3IntegrationFlowTests(unittest.TestCase):
     def test_stale_perception_result_fails_search(self):
         self.manager.begin(self.coarse, now=12.0)
         self.manager.approach_reached()
-        accepted = self.manager.accept_perception_result(
-            self._result(timestamp=10.0, valid_until=20.0),
-            Pose2D(0.0, 0.0, 0.0),
-            now=13.0,
-        )
-        self.assertFalse(accepted)
+        for _ in range(3):
+            accepted = self.manager.accept_perception_result(
+                self._result(timestamp=10.0, valid_until=20.0),
+                Pose2D(0.0, 0.0, 0.0),
+                now=13.0,
+            )
+            self.assertFalse(accepted)
         self.assertEqual(self.manager.state, Task3FlowState.ERROR)
         self.assertIn("stale", self.manager.error)
 
     def test_result_valid_until_expiry_fails_search(self):
         self.manager.begin(self.coarse, now=12.0)
         self.manager.approach_reached()
-        accepted = self.manager.accept_perception_result(
-            self._result(timestamp=12.0, valid_until=12.4),
-            Pose2D(0.0, 0.0, 0.0),
-            now=12.5,
-        )
-        self.assertFalse(accepted)
+        for _ in range(3):
+            accepted = self.manager.accept_perception_result(
+                self._result(timestamp=12.0, valid_until=12.4),
+                Pose2D(0.0, 0.0, 0.0),
+                now=12.5,
+            )
+            self.assertFalse(accepted)
         self.assertEqual(self.manager.state, Task3FlowState.ERROR)
         self.assertIn("stale", self.manager.error)
 
