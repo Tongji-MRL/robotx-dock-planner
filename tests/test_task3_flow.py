@@ -216,6 +216,23 @@ class Task3FlowTests(unittest.TestCase):
         ))
         self.assertEqual(self.manager.state, Task3FlowState.CHECK_BAY_COLOR)
 
+    def test_transient_color_failure_retries_before_error(self):
+        self.manager.begin(self.coarse)
+        self.manager.approach_reached()
+        self.manager.accept_entrance_observation(self.entrance, Pose2D(0, 0, 0))
+        for attempt in (1, 2):
+            self.assertIsNone(self.manager.accept_color_observation(
+                BayColorObservation("GREEN", 0.49, 12.0 + attempt, "mock_color")
+            ))
+            self.assertEqual(self.manager.state, Task3FlowState.CHECK_BAY_COLOR)
+            self.assertEqual(self.manager.retry_status["attempt"], attempt)
+            self.assertIsNone(self.manager.error)
+        self.assertIsNone(self.manager.accept_color_observation(
+            BayColorObservation("GREEN", 0.49, 15.0, "mock_color")
+        ))
+        self.assertEqual(self.manager.state, Task3FlowState.ERROR)
+        self.assertIn("confidence", self.manager.error)
+
     def test_confidence_thresholds_are_validated(self):
         with self.assertRaises(ValueError):
             Task3FlowManager(
@@ -285,6 +302,9 @@ class Task3FlowTests(unittest.TestCase):
         )
         self.assertEqual(len(search_plan.arc_waypoints), 1)
         self.manager.approach_reached()
+        # The first two exhausted-search reports are transient retries.
+        self.assertIsNotNone(self.manager.search_waypoint_reached())
+        self.assertIsNotNone(self.manager.search_waypoint_reached())
         self.assertIsNone(self.manager.search_waypoint_reached())
         self.assertEqual(self.manager.state, Task3FlowState.ERROR)
         self.assertIn("arc exhausted", self.manager.error)

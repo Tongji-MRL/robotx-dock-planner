@@ -346,7 +346,7 @@ class Task3SubFSMBridge:
         return self._emit(
             "TASK3_COMPLETE",
             command=PlannerCommand.REPORT_TASK_COMPLETE,
-            payload={"result": dict(result)},
+            payload={"result": dict(result), "fsm_progress": "TASK3_FINISH"},
         )
 
     def _start_task3(self, command: MasterCommand) -> SubFSMReport:
@@ -446,12 +446,14 @@ class Task3SubFSMBridge:
         if self.run_id not in (None, command.run_id):
             raise ValueError("SAFE_STOP run_id does not match the active run")
         self.run_id = command.run_id
+        task_name = "TASK4" if self.active_task is TaskCode.TASK4 else "TASK3"
         return self._emit(
             "TASK3_SAFE_STOP_ACK",
-            error=CommonError.EXECUTION_REJECTED,
             command=PlannerCommand.ACK,
             payload={
                 "accepted": True,
+                "fsm_progress": f"{task_name}_END_ACK",
+                "return_to_start_required": True,
                 "safe_actions": [
                     "CANCEL_ACTIVE_NAVIGATION",
                     "PUMP_OFF",

@@ -1,6 +1,6 @@
 # RobotX 2026 Task 3 完成度清单
 
-更新时间：2026-10-10
+更新时间：2026-10-27
 
 说明：`[x]` 表示已经实现或确认，`[ ]` 表示仍需完成。纯 Python 项目打勾，
 只代表逻辑和单元测试完成，不代表 ROS、硬件或实船已经验证。
@@ -29,12 +29,12 @@
 | P0 | [x] | 公共避障模块接入契约 | `PROCEED/HOLD/REPLAN/ABORT` 带有效期；非 PROCEED、过期或严格模式下缺失均强制零速度 | Task1 公共模块确定 ROS 接口后只编写 adapter，并把 REPLAN/ABORT 接入任务监督器 |
 | P0 | [ ] | ROS 速度命令仲裁节点 | goto 和 terminal 当前都面向 `/usv/control/cmd_vel` | 分别重映射输入，只允许仲裁节点发布最终速度 |
 | P0 | [x] | MAVROS 工作区定位 | `/home/robotx/mavros_ws/install` 中已有节点和 local-position/setpoint 插件 | source 后做台架验证；当前终端环境尚未加载该 overlay |
-| P0 | [x] | Mid-360 驱动 | `/livox/lidar` 为 PointCloud2，`livox_frame`，约 10 Hz、单帧约 19968 点；`/livox/imu` 实时约 200 Hz | 保留启动命令和配置，后续做开机启动评审 |
-| P0 | [x] | 共用 Mid-360 ROS2 包 | `ros2/robotx_perception_common/` 已包含 PointCloud2 解析、`livox_frame → base_link` 转换和 `task3_lidar_bringup.launch.py` | 放入 Orin 工作区后执行 colcon 构建，核对 topic、frame 和启动参数 |
+| P0 | [x] | Mid-360 驱动 | Orin 实测 `/livox/lidar` 为 `livox_ros_driver2/msg/CustomMsg`，约 10 Hz、单帧约 19968 点；另有 `/livox/imu` | 保留启动命令和配置，后续做开机启动评审 |
+| P0 | [x] | 共用 Mid-360 ROS2 包 | `ros2/robotx_perception_common/` 已同时支持 PointCloud2/CustomMsg、全零点过滤、`livox_frame → base_link` 转换；本地临时 colcon 构建通过 | 放入 Orin 工作区后再次构建，并核对真实 topic、frame 和启动参数 |
 | P0 | [x] | PointCloud2 纯解析核心 | 已按 Mid-360 实际 26-byte 混合字段布局实现 x/y/z 提取、NaN/Inf 过滤、全零占位点过滤和质量统计 | 使用 dock 现场 rosbag 验证入口识别结果 |
-| P0 | [ ] | PointCloud2 ROS adapter | 已实现独立 `task3_lidar_perception` 节点：订阅 `/livox/lidar`、转换到 `base_link`/NED，并发布现有 `dock_perception` JSON；纯函数和 167 项测试通过 | 在 Orin 构建节点，提供带 `heading_rad` 的 NED 位姿后用真实 dock/rosbag 验证入口结果 |
+| P0 | [x] | LiDAR ROS 输入 adapter（本地） | `task3_lidar_perception` 已支持实际 `CustomMsg` 和备用 PointCloud2；CustomMsg 解析/外参转换测试通过，临时 colcon 构建通过 | 在 Orin 构建节点，提供带 `heading_rad` 的 NED 位姿后用真实 dock/rosbag 验证入口结果 |
 | P0 | [x] | Mid-360 安装外参/TF | 已测得 `base_link → livox_frame` `(+0.15, 0, +0.22) m`；Orin 已建立静态 TF，`tf2_echo` 已验证 frame 和数值 | 水上低速转向测试后再确认安装误差余量 |
-| P0 | [ ] | Task3 LiDAR 入口识别 ROS bridge | `task3_lidar_perception.launch.py` 和 `task3_lidar_perception` 节点已加入公共包；明确拒绝没有航向的 position-only 输入 | 在 Orin 安装后，接入真实 coarse dock、NED heading 和入口点云，验证 `/tongji_mrl/twave/task3/dock_perception` |
+| P0 | [ ] | Task3 LiDAR 入口识别 ROS bridge | 本地节点和 launch 已完成，默认订阅实际 `CustomMsg`；仍要求真实 coarse dock、带航向的 NED 位姿 | 在 Orin 安装后验证真实输入和 `/tongji_mrl/twave/task3/dock_perception`；当前离线 center-free prototype 不能直接替代任务起始粗中心 |
 | P1 | [x] | Mid-360 测试 rosbag | 已复制到本地并直接读取；12.664 s、62.8 MiB、126 帧点云 | 继续采集包含真实 dock 和多角度观察的 bag |
 | P1 | [x] | 真实点云质量统计 | 单帧 19872 点，XYZ 有限比例 100%；754 个全零占位点（约 3.8%）已识别，最大距离 8.840 m | 现场 dock 数据继续记录相同统计，注意原始数据保留全零点 |
 | P1 | [x] | 离线 dock 入口几何识别 | synthetic 点云与仿真多视角检测已经完成 | 用录制的 Mid-360 数据调参，不伪造 TF |
@@ -50,13 +50,13 @@
 | P1 | [x] | 资源颜色序列解析 | 已解析锡罐/resource 颜色和圆圈/destination 颜色；staging 已验证有效、UNKNOWN、缺字段和 `CORE_COMPLETE` 变体 | 在 Orin 订阅正式 topic，交给 USV 状态机 |
 | P1 | [x] | 颜色序列接口契约 | staging 已固定 `/tongji_mrl/twave/task3/color_sequence` + `std_msgs/msg/Int32MultiArray`；`data=[tin_color,circle_color]`，6 个颜色编码和 UNKNOWN 规则已测试 | 交给 communication 模块和 UAV/OCS 负责人确认并接收 |
 | P1 | [ ] | 向 UAV/OCS 发布颜色序列 | 已有接口契约，但尚未接入正式 communication 模块 | 确认对端订阅同一 topic/type 后再做 ROS publisher |
-| P0 | [x] | Task3 与总规划器通信 adapter | 已实现正确 bay progress/靠泊完成报告、喷水窗口 progress/完成报告、14 位状态进度、命令 ACK/去重/转发、UAV/USV heartbeat 校验与超时 fault；ROS 2 隔离构建通过 | 当前为 Task3 侧联调 adapter；同步到统一 Orin 后由 `robotx_communication` 承担通用转发，heartbeat 由总状态机发布真实数据 |
+| P0 | [x] | Task3 与 FSM 主规划器通信 adapter | 已按 FSM `mission_planner_node.py` 的 `vehicle/task/progress/error/command` 格式实现正确 bay progress/靠泊结果、喷水窗口 progress/完成结果、Task3/Task4 命令 ACK/去重/转发；ROS 2 隔离构建通过 | 当前仍是 Task3 侧联调 adapter；heartbeat 继续由车辆/通信模块发布真实数据，Task3 不伪造 |
 | P0 | [ ] | 统一工作区通信归位 | 已明确 `robotx_communication`、`usv_state_machine`、`task3` 的责任边界，未复制第二份可执行 adapter | 在通信负责人确认字段后，将通用 envelope/heartbeat/ACK/fault/report 接入 `src/robotx_communication`，由 staging 构建并在 Orin 验证 |
 | P1 | [x] | 重试次数和时间监督 | 最大次数、单次超时和总超时均可配置 | 现场测试后调整参数 |
 | P1 | [x] | 退出 dock 与返回几何 | 可生成 dock 外退出点和岸边等待目标点 | 每个场地配置经过确认的安全等待点 |
 | P1 | [ ] | 异常恢复接入 executor | 纯 Python 已能输出重试、退出和返回决策 | 接入 executor 状态与 goto DONE/ABORTED 反馈 |
 | P2 | [ ] | 复用 Task 1 避障 | 当前版本明确未实现 | 等 Task 1 源码/API 确认后再审计和接入 |
-| P0 | [ ] | Orin 代码同步 | 之前只迁移过部分纯接口文件 | 评审后迁移最终文件，避免覆盖其他人的代码 |
+| P0 | [ ] | Orin 代码同步 | 本地公共包已完成 CustomMsg 适配和构建验证 | 只同步 `ros2/robotx_perception_common/` 及其依赖变更，避免覆盖 Orin 其他人的代码 |
 | P0 | [ ] | Orin 无控制 dry run | 本地纯 Python 测试通过 | 使用 mock 或 rosbag 通过 ROS adapter 回放，不发送运动命令 |
 | P0 | [ ] | 分阶段水上测试 | 尚未执行 | 按安全门依次测试 approach/search、靠泊、水泵和返航 |
 | P0 | [ ] | 比赛级整链运行 | 尚未实现 | 完成全部未勾选 P0 项，并保存一次可重复运行记录 |

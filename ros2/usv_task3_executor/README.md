@@ -1,12 +1,13 @@
 # Task3 Perception and Communication Adapters
 
-Task3 与总规划器的 progress、report、command/ACK、正确泊位、喷水窗口以及双机
-heartbeat 监测由当前联调节点 `task3_communication_adapter` 提供。完整接口见仓库根目录
-`TASK3_ROS_INTERFACE.md`。
+Task3 与 FSM 主规划器的 progress、result、command/ACK、正确泊位、喷水窗口以及双机
+heartbeat 监测由当前联调节点 `task3_communication_adapter` 提供。ROS 外部消息严格使用
+FSM `mission_planner_node.py` 的 `vehicle/task/progress/error/command` JSON 格式。完整接口
+见仓库根目录 `TASK3_ROS_INTERFACE.md`。
 
 统一 Orin 工作区中，车辆级 heartbeat 的生产发布者属于 `usv_state_machine`，通用
-通信转发属于 `robotx_communication`；本节点保留 Task3 事件到通信 envelope 的联调
-适配，不应在正式工作区复制第二份同名通信节点。
+通信转发属于 `robotx_communication`；本节点只保留 Task3 事件到 FSM legacy JSON 的联调
+适配，不应在正式工作区复制第二份主规划器节点。
 
 只启动通信 adapter：
 
