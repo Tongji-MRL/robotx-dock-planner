@@ -9,6 +9,19 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("dry_run", default_value="true"),
+            DeclareLaunchArgument("platform_id", default_value="0"),
+            Node(
+                package="usv_task3_executor",
+                executable="task3_semantic_map_adapter",
+                output="screen",
+                parameters=[
+                    {
+                        "platform_id": ParameterValue(
+                            LaunchConfiguration("platform_id"), value_type=int
+                        )
+                    }
+                ],
+            ),
             Node(
                 package="usv_task3_executor",
                 executable="task3_executor",

@@ -24,7 +24,7 @@ setup(
         "console_scripts": [
             "task3_executor = usv_task3_executor.node:main",
             "task3_perception_adapter = usv_task3_executor.perception_adapter:main",
-            "task3_semantic_map_mock_adapter = usv_task3_executor.semantic_map_adapter:main",
+            "task3_semantic_map_adapter = usv_task3_executor.semantic_map_adapter:main",
             "task3_communication_adapter = usv_task3_executor.communication_adapter:main",
         ]
     },
