@@ -105,7 +105,7 @@
 | C15 | 同时出现多个 gap 候选 | 选错 bay/入口 | 🟡 | 候选按 confidence 排序，multiple-gap 有测试 | 加跨帧关联、bay 几何一致性和切换迟滞 | P0 |
 | C16 | 两个法向造成 180° 朝向歧义 | 船向外停泊 | 🟡 | 参考 coarse center 选朝内法向；模糊时降置信度 | 真实 TF 后验证，不满足则 invalid | P0 |
 | C17 | 候选 confidence 很低但 `valid=true` | flow 仍可能接受 | ✅ | flow 对入口和 bay 颜色分别配置统一最低置信度，低于门限时保持观察 | 用真实数据标定门限 | P0 |
-| C18 | 候选中心/朝向连续帧剧烈跳动 | setpoint 跳变 | 🟡 | research 有五帧一致性工具 | 正式输出增加稳定窗口、最大跳变和锁定 ID | P0 |
+| C18 | 候选中心/朝向连续帧剧烈跳动 | setpoint 跳变 | 🟡 | 离线研究分支已有五帧一致性工具 | 正式感知输出增加稳定窗口、最大跳变和锁定 ID | P0 |
 | C19 | 入口短时丢失后仍沿用旧 pose | 船驶向过时入口 | ✅ | flow freshness 会拒绝 stale observation | ROS adapter 每周期发布 valid/invalid，不能只在成功时发布 | P0 |
 | C20 | LiDAR 在绕行中断电或驱动崩溃 | 船盲行 | ❌ | 无运行 watchdog | 超过消息超时立即 `HOLD_ZERO`，有限重启驱动 | P0 |
 | C21 | 真实 dock 有三个入口但局部只看见一个 | 误以为已搜索全部 bay | 🟡 | 仿真覆盖三个 bay，单帧允许局部可见 | 记录已观察 bay/角度范围，不能用单帧结束全搜索 | P1 |

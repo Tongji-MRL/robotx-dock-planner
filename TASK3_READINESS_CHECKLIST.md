@@ -67,9 +67,8 @@
 - 独立 LiDAR prototype：`18 tests passed`；200 组随机 synthetic 场景严格成功率 98.5%，
   32 个仿真视角中 5 个可见入口视角全部选对最高候选，覆盖 3 个 bay。
 - 真实 Mid-360 bag 抽帧：已验证 `livox_frame`、混合字段解析和全零点过滤。
-- `examples.task3_full_dry_run`：粗中心到喷水及颜色序列，运动到达事件使用 mock。
-- `examples.task3_safety_recovery_dry_run`：随机边界、安全圆弧、三次尝试、退出 dock 和岸边等待点。
-- `examples.task3_control_handoff_dry_run`：STOP、GOTO、TERMINAL 三种速度控制权切换。
+- 核心单元测试覆盖粗中心接近、随机边界、安全圆弧、重试退出、颜色序列和控制权切换。
+- 仿真证据与离线 LiDAR 研究材料保存在 `archive/task3-research-20261031`，不部署到 Orin 主线。
 
 ## 必须保持可配置的参数
 
