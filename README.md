@@ -33,6 +33,7 @@ Task3 只发布内部任务数据。对 UAV/OCS 的通信、ACK、重试和当�
 | `TASK3_COMMUNICATION_PROTOCOL.md` | 子状态机与总状态机通信协议 |
 | `TASK3_ABNORMAL_SCENARIOS.md` | 异常场景、处理策略与完成情况 |
 | `TASK3_READINESS_CHECKLIST.md` | 上船前检查清单 |
+| `TASK3_FIELD_TEST_RUNBOOK.md` | 实船分阶段测试、安全门、故障处理与数据交接手册 |
 | `USV_BASELINK说明.md` | `base_link`、船体包络与待测外参 |
 
 ## 与 USV Orin 统一工作区的对应关系
