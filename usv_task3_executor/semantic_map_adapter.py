@@ -1,58 +1,62 @@
-"""Convert semantic-map mock dock centers into Task3 coarse-dock messages."""
+"""Convert shared semantic-map snapshots into Task3 internal inputs."""
+
+from __future__ import annotations
 
 import json
 import math
 from typing import Any
 
+from robotx_semantic_map import parse_snapshot, select_objects_by_type
+
 
 def _finite_number(value: Any, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field_name} must be a finite number")
-    try:
-        number = float(value)
-    except (OverflowError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be a finite number") from exc
+    number = float(value)
     if not math.isfinite(number):
         raise ValueError(f"{field_name} must be a finite number")
     return number
 
 
+def build_platform_report(data: str) -> dict[str, Any]:
+    selected = select_objects_by_type(data, "platform")
+    return {
+        "task_id": 3,
+        "data_kind": "platforms",
+        "map_epoch": selected["map_epoch"],
+        "version": selected["version"],
+        "objects": selected["objects"],
+    }
+
+
 def parse_semantic_map_dock(
     data: str, dock_id: int, timestamp: float
 ) -> dict[str, Any]:
-    """Return one selected dock as an explicitly marked center-only mock."""
+    """Select one platform/dock center already expressed in common NED."""
 
-    try:
-        payload = json.loads(data)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid semantic map JSON: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("semantic map JSON must be an object")
-
-    objects = payload.get("objects")
-    if not isinstance(objects, list):
-        raise ValueError("objects must be an array")
+    payload = parse_snapshot(data)
     if isinstance(dock_id, bool) or not isinstance(dock_id, int):
         raise ValueError("dock_id parameter must be an integer")
     timestamp = _finite_number(timestamp, "timestamp")
-
+    candidates = []
+    for object_type in ("platform", "dock"):
+        candidates.extend(select_objects_by_type(payload, object_type)["objects"])
     matches = []
-    for item in objects:
-        if not isinstance(item, dict) or item.get("type") != "dock":
-            continue
+    for item in candidates:
         object_id = item.get("id", item.get("dock_id"))
-        if (
-            isinstance(object_id, bool)
-            or not isinstance(object_id, int)
-            or object_id != dock_id
-        ):
+        if isinstance(object_id, bool):
             continue
-        matches.append(item)
+        try:
+            matches_id = int(object_id) == dock_id
+        except (TypeError, ValueError):
+            matches_id = False
+        if matches_id:
+            matches.append(item)
 
     if not matches:
-        raise ValueError(f"dock id {dock_id} was not found")
+        raise ValueError(f"dock/platform id {dock_id} was not found")
     if len(matches) != 1:
-        raise ValueError(f"dock id {dock_id} matched multiple objects")
+        raise ValueError(f"dock/platform id {dock_id} matched multiple objects")
 
     coordinates = matches[0].get("NED_position")
     if not isinstance(coordinates, list) or len(coordinates) != 3:
@@ -61,7 +65,7 @@ def parse_semantic_map_dock(
         _finite_number(value, f"NED_position[{index}]")
         for index, value in enumerate(coordinates)
     ]
-
+    confidence = matches[0].get("confidence")
     return {
         "dock_id": str(dock_id),
         "center_ned": {
@@ -71,67 +75,87 @@ def parse_semantic_map_dock(
         },
         "timestamp": timestamp,
         "valid": True,
-        "source": "semantic_map_mock",
-        "mock": True,
-        "frame_id": "mock_ned",
+        "confidence": (
+            None if confidence is None else _finite_number(confidence, "confidence")
+        ),
+        "source": "semantic_map",
+        "mock": False,
+        "frame_id": "ned",
+        "map_epoch": payload.get("map_epoch", "default"),
+        "map_version": payload.get("version", 0),
     }
 
 
 def main(args=None) -> None:
     import rclpy
     from rclpy.node import Node
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from std_msgs.msg import String
 
-    class SemanticMapMockAdapter(Node):
+    class SemanticMapAdapter(Node):
         def __init__(self) -> None:
-            super().__init__("task3_semantic_map_mock_adapter")
-            self.declare_parameter("dock_id", 0)
-            self.declare_parameter("dry_run", True)
-            self.dock_id = self.get_parameter("dock_id").value
-            self.dry_run = self.get_parameter("dry_run").value
-            if isinstance(self.dock_id, bool) or not isinstance(self.dock_id, int):
-                raise ValueError("dock_id ROS parameter must be an integer")
-
+            super().__init__("task3_semantic_map_adapter")
+            self.declare_parameter("platform_id", 0)
+            self.declare_parameter("input_topic", "/task/semantic_map")
+            self.declare_parameter(
+                "platform_topic", "/tongji_mrl/twave/task3/platforms"
+            )
+            self.declare_parameter(
+                "coarse_dock_topic", "/tongji_mrl/twave/task3/coarse_dock"
+            )
+            self.platform_id = self.get_parameter("platform_id").value
+            if isinstance(self.platform_id, bool) or not isinstance(self.platform_id, int):
+                raise ValueError("platform_id ROS parameter must be an integer")
+            self.platform_pub = self.create_publisher(
+                String, str(self.get_parameter("platform_topic").value), 10
+            )
             self.coarse_dock_pub = self.create_publisher(
-                String, "/tongji_mrl/twave/task3/coarse_dock", 10
+                String, str(self.get_parameter("coarse_dock_topic").value), 10
+            )
+            map_qos = QoSProfile(
+                depth=1,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
             )
             self.semantic_map_sub = self.create_subscription(
-                String, "/task/semantic_map", self._on_semantic_map, 10
+                String,
+                str(self.get_parameter("input_topic").value),
+                self._on_semantic_map,
+                map_qos,
             )
-            if not self.dry_run:
-                self.get_logger().warning(
-                    "dry_run=false: semantic-map mock publishing is disabled."
-                )
+            self.last_snapshot: tuple[str, int] | None = None
 
-        def _on_semantic_map(self, msg: String) -> None:
-            if not self.dry_run:
-                return
-            timestamp = self.get_clock().now().nanoseconds / 1_000_000_000.0
+        def _on_semantic_map(self, message: String) -> None:
             try:
-                observation = parse_semantic_map_dock(
-                    msg.data, self.dock_id, timestamp
+                platforms = build_platform_report(message.data)
+                snapshot = (
+                    str(platforms["map_epoch"]),
+                    int(platforms["version"]),
                 )
-            except ValueError as exc:
-                self.get_logger().warning(
-                    f"Ignoring semantic_map message: {exc}"
+                if snapshot == self.last_snapshot:
+                    return
+                self.last_snapshot = snapshot
+                timestamp = self.get_clock().now().nanoseconds / 1_000_000_000.0
+                coarse = parse_semantic_map_dock(
+                    message.data, self.platform_id, timestamp
                 )
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                self.get_logger().warning(f"Ignoring semantic-map snapshot: {exc}")
                 return
 
-            output = String()
-            output.data = json.dumps(
-                observation, ensure_ascii=True, separators=(",", ":")
+            platform_message = String()
+            platform_message.data = json.dumps(
+                platforms, ensure_ascii=True, separators=(",", ":")
             )
-            self.coarse_dock_pub.publish(output)
-            center = observation["center_ned"]
-            self.get_logger().info(
-                "Published semantic-map mock dock center "
-                f"id={observation['dock_id']} "
-                f"NED=({center['north']:.3f}, {center['east']:.3f}, "
-                f"{center['down']:.3f}) frame=mock_ned"
+            self.platform_pub.publish(platform_message)
+            coarse_message = String()
+            coarse_message.data = json.dumps(
+                coarse, ensure_ascii=True, separators=(",", ":")
             )
+            self.coarse_dock_pub.publish(coarse_message)
 
     rclpy.init(args=args)
-    node = SemanticMapMockAdapter()
+    node = SemanticMapAdapter()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
@@ -139,3 +163,10 @@ def main(args=None) -> None:
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
+
+
+__all__ = ["build_platform_report", "parse_semantic_map_dock"]

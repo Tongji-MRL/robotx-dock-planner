@@ -1,12 +1,13 @@
 # Task3 Perception and Communication Adapters
 
-Task3 与总规划器的 progress、report、command/ACK、正确泊位、喷水窗口以及双机
-heartbeat 监测由当前联调节点 `task3_communication_adapter` 提供。完整接口见仓库根目录
-`TASK3_ROS_INTERFACE.md`。
+Task3 与 FSM 主规划器的 progress、result、command/ACK、正确泊位、喷水窗口以及双机
+heartbeat 监测由当前联调节点 `task3_communication_adapter` 提供。ROS 外部消息严格使用
+FSM `mission_planner_node.py` 的 `vehicle/task/progress/error/command` JSON 格式。完整接口
+见仓库根目录 `TASK3_ROS_INTERFACE.md`。
 
 统一 Orin 工作区中，车辆级 heartbeat 的生产发布者属于 `usv_state_machine`，通用
-通信转发属于 `robotx_communication`；本节点保留 Task3 事件到通信 envelope 的联调
-适配，不应在正式工作区复制第二份同名通信节点。
+通信转发属于 `robotx_communication`；本节点只保留 Task3 事件到 FSM legacy JSON 的联调
+适配，不应在正式工作区复制第二份主规划器节点。
 
 只启动通信 adapter：
 
@@ -28,31 +29,38 @@ The camera perception adapter records the interfaces currently available on the 
 
 The adapter deliberately does not subscribe to `/robotx/perception/docking/entrance`; no publisher for that topic is currently available.
 
-## Semantic-map Mock Coarse Dock
+## Shared Semantic-map Input
 
-`task3_semantic_map_mock_adapter` is a separate, dry-run-only input bridge:
+`task3_semantic_map_adapter` converts the retained shared map into Task3 internal
+messages. The map is owned by `robotx_semantic_map`; Task3 does not read a Markdown
+file and does not publish directly to UAV or OCS.
 
 | Topic | Type | Behavior |
 |---|---|---|
-| `/task/semantic_map` | `std_msgs/msg/String` | Selects one object with `type == "dock"` and matching integer `id` (or `dock_id`), then validates its three-element finite `NED_position`. |
-| `/tongji_mrl/twave/task3/coarse_dock` | `std_msgs/msg/String` | Publishes a center-only mock record marked with `source: "semantic_map_mock"`, `mock: true`, and `frame_id: "mock_ned"`. |
+| `/task/semantic_map` | `std_msgs/msg/String` | Retained, versioned map snapshot. Selects `platform` or legacy `dock` objects with a finite three-element `NED_position`. |
+| `/tongji_mrl/twave/task3/platforms` | `std_msgs/msg/String` | Internal platform list for the USV main state machine. The main state machine controls external task reporting. |
+| `/tongji_mrl/twave/task3/coarse_dock` | `std_msgs/msg/String` | Selected center with `source: "semantic_map"`, `mock: false`, and `frame_id: "ned"`. |
 
-The selected dock ID defaults to `0`. Run the adapter and executor in separate terminals:
+The selected platform ID defaults to `0`. The standard launch starts the adapter and
+executor together:
 
 ```bash
-ros2 launch usv_task3_executor task3_semantic_map_mock_adapter.launch.py
-ros2 launch usv_task3_executor task3_executor.launch.py
+ros2 launch usv_task3_executor task3_executor.launch.py platform_id:=0
 ```
 
-Set another ID with `dock_id:=N`. Mock publication is disabled when `dry_run:=false`. The executor records this center observation only while its own `dry_run` parameter is true. It does not pass this center-only mock into `Task3FlowManager`: the existing flow requires four approximate corners, which the semantic-map input does not provide. The executor does not require or confirm `px4_local_ned`; this adapter preserves the honest `mock_ned` label, and the coordinates must not be treated as verified PX4 local NED.
+The executor records the center observation. Starting the circular search also requires a
+current USV planar pose including heading; the current position String does not yet carry
+heading, so this adapter does not fabricate one or start navigation by itself.
 
 For a selected object, the published JSON is:
 
 ```json
-{"dock_id":"0","center_ned":{"north":1.0,"east":2.0,"down":3.0},"timestamp":123.456,"valid":true,"source":"semantic_map_mock","mock":true,"frame_id":"mock_ned"}
+{"dock_id":"0","center_ned":{"north":1.0,"east":2.0,"down":3.0},"timestamp":123.456,"valid":true,"source":"semantic_map","mock":false,"frame_id":"ned","map_epoch":"run-3","map_version":7}
 ```
 
-The timestamp is the adapter's ROS clock time at message receipt. No confidence value or dock corners are generated. Invalid JSON, a missing target, or malformed/non-finite coordinates produce a warning and no publication.
+The timestamp is the adapter's ROS clock time at message receipt. Confidence is preserved
+when present. No corners or entrance pose are invented. Invalid JSON, a missing target, or
+malformed/non-finite coordinates produce a warning and no publication.
 
 ## Outputs Not Produced by the Camera Perception Adapter
 

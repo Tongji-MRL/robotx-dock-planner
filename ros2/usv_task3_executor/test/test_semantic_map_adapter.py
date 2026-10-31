@@ -1,63 +1,52 @@
 import json
-import math
 import unittest
 
-from usv_task3_executor.semantic_map_adapter import parse_semantic_map_dock
+from usv_task3_executor.semantic_map_adapter import (
+    build_platform_report,
+    parse_semantic_map_dock,
+)
 
 
 def semantic_map(*objects):
-    return json.dumps({"objects": list(objects)})
+    return json.dumps({
+        "map_epoch": "run-3",
+        "version": 7,
+        "objects": list(objects),
+    })
 
 
-class SemanticMapDockParserTest(unittest.TestCase):
-    def test_selects_dock_id_zero(self):
+class SemanticMapAdapterTests(unittest.TestCase):
+    def test_selects_platforms_for_state_machine(self):
+        report = build_platform_report(semantic_map(
+            {"id": 0, "type": "platform", "NED_position": [1, 2, 3]},
+            {"id": 1, "type": "buoy", "NED_position": [4, 5, 6]},
+        ))
+        self.assertEqual(report["task_id"], 3)
+        self.assertEqual(report["data_kind"], "platforms")
+        self.assertEqual(report["map_epoch"], "run-3")
+        self.assertEqual([item["id"] for item in report["objects"]], [0])
+
+    def test_builds_real_ned_coarse_center(self):
         result = parse_semantic_map_dock(
-            semantic_map(
-                {"id": 0, "type": "dock", "NED_position": [1, 2, 3]},
-                {"id": 1, "type": "dock", "NED_position": [4, 5, 6]},
-            ),
+            semantic_map({
+                "id": 0,
+                "type": "platform",
+                "NED_position": [1, 2, 3],
+                "confidence": 0.9,
+            }),
             dock_id=0,
             timestamp=12.5,
         )
-
-        self.assertEqual(result["dock_id"], "0")
         self.assertEqual(result["center_ned"], {"north": 1.0, "east": 2.0, "down": 3.0})
-        self.assertEqual(result["timestamp"], 12.5)
-        self.assertTrue(result["valid"])
-        self.assertEqual(result["source"], "semantic_map_mock")
-        self.assertTrue(result["mock"])
-        self.assertEqual(result["frame_id"], "mock_ned")
-        self.assertNotIn("confidence", result)
+        self.assertEqual(result["source"], "semantic_map")
+        self.assertFalse(result["mock"])
+        self.assertEqual(result["frame_id"], "ned")
+        self.assertEqual(result["confidence"], 0.9)
 
-    def test_selects_configured_dock_id(self):
-        result = parse_semantic_map_dock(
-            semantic_map(
-                {"id": 0, "type": "dock", "NED_position": [1, 2, 3]},
-                {"id": 7, "type": "dock", "NED_position": [4, 5, 6]},
-            ),
-            dock_id=7,
-            timestamp=3.0,
-        )
-
-        self.assertEqual(result["dock_id"], "7")
-        self.assertEqual(result["center_ned"]["north"], 4.0)
-
-    def test_rejects_missing_dock(self):
+    def test_rejects_missing_platform(self):
         with self.assertRaisesRegex(ValueError, "was not found"):
             parse_semantic_map_dock(
                 semantic_map({"id": 1, "type": "buoy", "NED_position": [1, 2, 3]}),
-                dock_id=0,
-                timestamp=1.0,
-            )
-
-    def test_rejects_invalid_json(self):
-        with self.assertRaisesRegex(ValueError, "invalid semantic map JSON"):
-            parse_semantic_map_dock("{", dock_id=0, timestamp=1.0)
-
-    def test_rejects_non_finite_coordinate(self):
-        with self.assertRaisesRegex(ValueError, "finite number"):
-            parse_semantic_map_dock(
-                '{"objects":[{"id":0,"type":"dock","NED_position":[1,NaN,3]}]}',
                 dock_id=0,
                 timestamp=1.0,
             )

@@ -19,6 +19,7 @@ from dock_planner import (
     PlannerConfig,
     Pose2D,
     Task3FlowManager,
+    Task3RetryConfig,
     Task3FlowState,
 )
 
@@ -44,6 +45,8 @@ class Task3Executor(Node):
         self.declare_parameter("bay_depth_m", 6.0)
         self.declare_parameter("approach_distance_m", 5.0)
         self.declare_parameter("stop_distance_inside_m", 1.0)
+        self.declare_parameter("retry_max_attempts", 3)
+        self.declare_parameter("retry_operation_timeout_s", 30.0)
         self.flow_manager = Task3FlowManager(
             DockPlanner(
                 PlannerConfig(
@@ -54,10 +57,17 @@ class Task3Executor(Node):
             target_color=str(self.get_parameter("target_color").value),
             bay_width=float(self.get_parameter("bay_width_m").value),
             bay_depth=float(self.get_parameter("bay_depth_m").value),
+            retry_config=Task3RetryConfig(
+                max_attempts=int(self.get_parameter("retry_max_attempts").value),
+                operation_timeout_s=float(
+                    self.get_parameter("retry_operation_timeout_s").value
+                ),
+            ),
         )
         self.dry_run = bool(self.get_parameter("dry_run").value)
-        self.latest_mock_coarse_dock_center: Optional[CoarseDockCenterObservationNED] = None
-        self.latest_mock_coarse_dock_frame_id: Optional[str] = None
+        self.latest_coarse_dock_center: Optional[CoarseDockCenterObservationNED] = None
+        self.latest_coarse_dock_frame_id: Optional[str] = None
+        self.latest_coarse_dock_is_mock = False
         self.latest_position_ned_m: Optional[dict[str, float]] = None
         self.latest_frame_id: Optional[str] = None
         self.latest_position_message_time: Optional[float] = None
@@ -147,28 +157,41 @@ class Task3Executor(Node):
             payload = json.loads(msg.data)
             if not isinstance(payload, dict):
                 raise ValueError("message JSON must be an object")
-            if payload.get("mock") is True:
-                if not self.dry_run:
-                    raise ValueError("mock coarse dock input requires dry_run=true")
-                if payload.get("source") != "semantic_map_mock":
-                    raise ValueError("unsupported mock coarse dock source")
+            if "approximate_corners_ned" not in payload:
+                is_mock = payload.get("mock") is True
+                if is_mock:
+                    if not self.dry_run:
+                        raise ValueError("mock coarse dock input requires dry_run=true")
+                    if payload.get("source") != "semantic_map_mock":
+                        raise ValueError("unsupported mock coarse dock source")
+                elif payload.get("source") != "semantic_map":
+                    raise ValueError("unsupported center-only coarse dock source")
                 frame_id = payload.get("frame_id")
-                if frame_id != "mock_ned":
-                    raise ValueError("semantic-map mock frame_id must be mock_ned")
+                expected_frame = "mock_ned" if is_mock else "ned"
+                if frame_id != expected_frame:
+                    raise ValueError(
+                        f"center-only semantic-map frame_id must be {expected_frame}"
+                    )
                 if payload.get("valid") is not True:
-                    raise ValueError("mock coarse dock message is not valid")
+                    raise ValueError("coarse dock center message is not valid")
                 observation = CoarseDockCenterObservationNED(
-                    dock_id=payload["dock_id"],
+                    dock_id=str(payload["dock_id"]),
                     center_ned=self._parse_ned_point(payload["center_ned"], "center_ned"),
                     timestamp=_finite_json_number(payload["timestamp"], "timestamp"),
                     valid=True,
+                    confidence=(
+                        None
+                        if payload.get("confidence") is None
+                        else _finite_json_number(payload["confidence"], "confidence")
+                    ),
                     source=payload["source"],
                 )
-                self.latest_mock_coarse_dock_center = observation
-                self.latest_mock_coarse_dock_frame_id = frame_id
+                self.latest_coarse_dock_center = observation
+                self.latest_coarse_dock_frame_id = frame_id
+                self.latest_coarse_dock_is_mock = is_mock
                 self.get_logger().info(
-                    "Recorded center-only semantic-map mock; flow remains unchanged "
-                    "because no dock corners or verified NED frame are available."
+                    "Recorded center-only semantic-map dock observation; search start "
+                    "waits for a current pose that includes heading."
                 )
                 return
 
@@ -274,21 +297,24 @@ class Task3Executor(Node):
                 "position_ned_m": self.latest_position_ned_m,
                 "frame_id": self.latest_frame_id,
                 "dry_run": self.dry_run,
-                "mock_coarse_dock_center": (
+                "error": self.flow_manager.error,
+                "retry": self.flow_manager.retry_status,
+                "coarse_dock_center": (
                     None
-                    if self.latest_mock_coarse_dock_center is None
+                    if self.latest_coarse_dock_center is None
                     else {
-                        "dock_id": self.latest_mock_coarse_dock_center.dock_id,
+                        "dock_id": self.latest_coarse_dock_center.dock_id,
                         "center_ned": {
-                            "north": self.latest_mock_coarse_dock_center.center_ned.north,
-                            "east": self.latest_mock_coarse_dock_center.center_ned.east,
-                            "down": self.latest_mock_coarse_dock_center.center_ned.down,
+                            "north": self.latest_coarse_dock_center.center_ned.north,
+                            "east": self.latest_coarse_dock_center.center_ned.east,
+                            "down": self.latest_coarse_dock_center.center_ned.down,
                         },
-                        "timestamp": self.latest_mock_coarse_dock_center.timestamp,
-                        "valid": self.latest_mock_coarse_dock_center.valid,
-                        "source": self.latest_mock_coarse_dock_center.source,
-                        "mock": True,
-                        "frame_id": self.latest_mock_coarse_dock_frame_id,
+                        "timestamp": self.latest_coarse_dock_center.timestamp,
+                        "valid": self.latest_coarse_dock_center.valid,
+                        "confidence": self.latest_coarse_dock_center.confidence,
+                        "source": self.latest_coarse_dock_center.source,
+                        "mock": self.latest_coarse_dock_is_mock,
+                        "frame_id": self.latest_coarse_dock_frame_id,
                     }
                 ),
             },

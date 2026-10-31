@@ -6,7 +6,9 @@ PX4.  Those responsibilities remain at adapters around this flow.
 """
 
 from enum import Enum
+from dataclasses import dataclass
 import math
+import time
 from typing import Optional
 
 from .integration import (
@@ -60,6 +62,33 @@ class Task3FlowState(str, Enum):
     ERROR = "ERROR"
 
 
+@dataclass(frozen=True)
+class Task3RetryConfig:
+    """Bounds for transient Task3 failures before a terminal error is raised.
+
+    ``max_attempts`` includes the first failed attempt.  For example, with
+    the default value of three, the first two failures keep the flow in its
+    current step and the third failure becomes ``ERROR``.  The time bound is
+    measured per retry operation, so a fresh successful observation resets it.
+    """
+
+    max_attempts: int = 3
+    operation_timeout_s: float = 30.0
+
+    def __post_init__(self) -> None:
+        if isinstance(self.max_attempts, bool) or not isinstance(self.max_attempts, int):
+            raise ValueError("max_attempts must be a positive integer")
+        if self.max_attempts <= 0:
+            raise ValueError("max_attempts must be a positive integer")
+        if (
+            isinstance(self.operation_timeout_s, bool)
+            or not isinstance(self.operation_timeout_s, (int, float))
+            or not math.isfinite(self.operation_timeout_s)
+            or self.operation_timeout_s <= 0
+        ):
+            raise ValueError("operation_timeout_s must be positive and finite")
+
+
 class Task3FlowManager:
     """Coordinate the confirmed Task 3 flow using injected observations."""
 
@@ -76,6 +105,7 @@ class Task3FlowManager:
         bay_visit_config: BayVisitConfig = BayVisitConfig(),
         min_entrance_confidence: float = 0.20,
         min_bay_color_confidence: float = 0.50,
+        retry_config: Task3RetryConfig = Task3RetryConfig(),
     ) -> None:
         if not isinstance(planner, DockPlanner):
             raise TypeError("planner must be a DockPlanner")
@@ -100,6 +130,8 @@ class Task3FlowManager:
             raise ValueError("min_boundary_clearance_m must be finite and nonnegative")
         if not isinstance(bay_visit_config, BayVisitConfig):
             raise TypeError("bay_visit_config must be a BayVisitConfig")
+        if not isinstance(retry_config, Task3RetryConfig):
+            raise TypeError("retry_config must be a Task3RetryConfig")
         for name, value in (
             ("min_entrance_confidence", min_entrance_confidence),
             ("min_bay_color_confidence", min_bay_color_confidence),
@@ -131,6 +163,12 @@ class Task3FlowManager:
         self._non_target_exit_plan: Optional[BayExitPlan] = None
         self._error: Optional[str] = None
         self._active_bay_index: Optional[int] = None
+        self._retry_config = retry_config
+        self._retry_operation: Optional[str] = None
+        self._retry_attempts = 0
+        self._retry_started_at: Optional[float] = None
+        self._retry_last_at: Optional[float] = None
+        self._retry_reason: Optional[str] = None
 
     @property
     def state(self) -> Task3FlowState:
@@ -160,6 +198,24 @@ class Task3FlowManager:
     @property
     def error(self) -> Optional[str]:
         return self._error
+
+    @property
+    def retry_status(self) -> dict[str, object] | None:
+        """Return transient retry information for communication adapters."""
+
+        if self._retry_operation is None or self._retry_started_at is None:
+            return None
+        return {
+            "operation": self._retry_operation,
+            "attempt": self._retry_attempts,
+            "max_attempts": self._retry_config.max_attempts,
+            "elapsed_s": max(
+                0.0,
+                (self._retry_last_at or self._retry_started_at) - self._retry_started_at,
+            ),
+            "timeout_s": self._retry_config.operation_timeout_s,
+            "reason": self._retry_reason or "",
+        }
 
     @property
     def bay_visit_records(self) -> tuple[BayVisitRecord, ...]:
@@ -206,6 +262,7 @@ class Task3FlowManager:
         self._search_waypoint_index = 0
         self._error = None
         self._active_bay_index = None
+        self._clear_retry()
         self._bay_tracker.reset()
         self._state = Task3FlowState.APPROACH_DOCK
 
@@ -259,7 +316,10 @@ class Task3FlowManager:
             raise RuntimeError("no circular search plan is active")
         self._search_waypoint_index += 1
         if self._search_waypoint_index >= len(self._search_plan.arc_waypoints):
-            self.fail("configured search arc exhausted without a dock entrance")
+            reason = "configured search arc exhausted without a dock entrance"
+            if self._retry_or_fail("search_arc", reason):
+                self._search_waypoint_index = 0
+                return self._search_plan.arc_waypoints[0]
             return None
         return self._search_plan.arc_waypoints[self._search_waypoint_index]
 
@@ -272,21 +332,25 @@ class Task3FlowManager:
     ) -> None:
         self._require(Task3FlowState.SEARCH_DOCK)
         if not isinstance(observation, DockEntranceObservationNED) or not observation.valid:
-            self.fail("a valid close-range entrance observation is required")
+            self._retry_or_fail(
+                "entrance_observation", "a valid close-range entrance observation is required"
+            )
             return
         if not isinstance(current_pose, Pose2D):
             self.fail("current_pose must be Pose2D")
             return
         if observation.dock_id not in (None, self._coarse_dock.dock_id if self._coarse_dock else None):
-            self.fail("entrance observation dock_id does not match coarse dock")
+            self._retry_or_fail("entrance_observation", "entrance observation dock_id does not match coarse dock")
             return
         if now is not None and not observation.is_fresh_at(
             now, self._freshness.perception_timeout_s
         ):
-            self.fail("entrance observation is stale")
+            self._retry_or_fail("entrance_observation", "entrance observation is stale", now=now)
             return
         if observation.confidence < self._min_entrance_confidence:
+            self._retry_or_fail("entrance_observation", "entrance confidence is below threshold", now=now)
             return
+        self._clear_retry("entrance_observation")
         decision = self._bay_tracker.observe(observation)
         if decision.action is BayCandidateAction.SEARCH_EXHAUSTED:
             self.fail("all expected dock bays have been exhausted")
@@ -318,12 +382,12 @@ class Task3FlowManager:
             self.fail("a DockPerceptionResult is required")
             return False
         if result.dock_id != (self._coarse_dock.dock_id if self._coarse_dock else None):
-            self.fail("perception result dock_id does not match coarse dock")
+            self._retry_or_fail("dock_perception", "perception result dock_id does not match coarse dock")
             return False
         if now is not None and not result.is_fresh_at(
             now, self._freshness.perception_timeout_s
         ):
-            self.fail("dock perception result is stale")
+            self._retry_or_fail("dock_perception", "dock perception result is stale", now=now)
             return False
         candidates = [
             observation for observation in result.entrance_observations
@@ -333,7 +397,9 @@ class Task3FlowManager:
             and (now is None or observation.is_fresh_at(now, self._freshness.perception_timeout_s))
         ]
         if not candidates:
+            self._retry_or_fail("dock_perception", "no usable entrance candidate", now=now)
             return False
+        self._clear_retry("dock_perception")
         for candidate in candidates:
             self.accept_entrance_observation(candidate, current_pose, now=now)
             if self._state is Task3FlowState.CHECK_BAY_COLOR:
@@ -350,19 +416,22 @@ class Task3FlowManager:
     ) -> Optional[PlanResult]:
         self._require(Task3FlowState.CHECK_BAY_COLOR)
         if not isinstance(observation, BayColorObservation) or not observation.valid:
+            self._retry_or_fail("bay_color", "a valid bay color observation is required", now=now)
             return None
         if observation.confidence < self._min_bay_color_confidence:
+            self._retry_or_fail("bay_color", "bay color confidence is below threshold", now=now)
             return None
         if now is not None and not observation.is_fresh_at(
             now, self._freshness.perception_timeout_s
         ):
-            self.fail("color observation is stale")
+            self._retry_or_fail("bay_color", "color observation is stale", now=now)
             return None
         if now is not None and self._entrance_observation is not None and not self._entrance_observation.is_fresh_at(
             now, self._freshness.perception_timeout_s
         ):
-            self.fail("entrance observation expired before color decision")
+            self._retry_or_fail("bay_color", "entrance observation expired before color decision", now=now)
             return None
+        self._clear_retry("bay_color")
         if observation.color.strip().upper() != self._target_color:
             if self._active_bay_index is None:
                 self.fail("selected entrance has no active bay record")
@@ -397,9 +466,11 @@ class Task3FlowManager:
             obstacles=self._terminal_input.obstacles,
         )
         if self._plan.status != PlanStatus.SUCCESS:
+            reason = f"terminal plan failed: {self._plan.reason}"
+            if self._retry_or_fail("terminal_plan", reason, now=now):
+                return self._plan
             if self._active_bay_index is not None:
                 self._bay_tracker.mark_terminal_failure(self._active_bay_index)
-            self.fail(f"terminal plan failed: {self._plan.reason}")
             return self._plan
         if self._planning_boundary is not None:
             self._terminal_boundary_validation = validate_terminal_plan_to_boundary(
@@ -485,7 +556,44 @@ class Task3FlowManager:
 
     def fail(self, reason: str) -> None:
         self._error = reason
+        self._clear_retry()
         self._state = Task3FlowState.ERROR
+
+    def _retry_or_fail(self, operation: str, reason: str, *, now: Optional[float] = None) -> bool:
+        """Record one transient failure; return True while another retry is allowed."""
+
+        if not isinstance(operation, str) or not operation.strip():
+            raise ValueError("operation must be a nonempty string")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("reason must be a nonempty string")
+        timestamp = time.time() if now is None else float(now)
+        if not math.isfinite(timestamp):
+            raise ValueError("now must be finite")
+        if self._retry_operation != operation or self._retry_started_at is None:
+            self._retry_operation = operation
+            self._retry_attempts = 0
+            self._retry_started_at = timestamp
+        self._retry_attempts += 1
+        self._retry_last_at = timestamp
+        self._retry_reason = reason.strip()
+        elapsed = timestamp - self._retry_started_at
+        exhausted = (
+            self._retry_attempts >= self._retry_config.max_attempts
+            or elapsed >= self._retry_config.operation_timeout_s
+        )
+        if exhausted:
+            self.fail(self._retry_reason)
+            return False
+        return True
+
+    def _clear_retry(self, operation: Optional[str] = None) -> None:
+        if operation is not None and self._retry_operation != operation:
+            return
+        self._retry_operation = None
+        self._retry_attempts = 0
+        self._retry_started_at = None
+        self._retry_last_at = None
+        self._retry_reason = None
 
     def _require(self, expected: Task3FlowState) -> None:
         if self._state != expected:
