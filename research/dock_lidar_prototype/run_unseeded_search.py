@@ -67,6 +67,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-width", type=float, default=0.8)
     parser.add_argument("--max-width", type=float, default=3.0)
     parser.add_argument("--min-confidence", type=float, default=0.35)
+    parser.add_argument("--disable-self-mask", action="store_true")
+    parser.add_argument("--self-x-min", type=float, default=-0.70)
+    parser.add_argument("--self-x-max", type=float, default=0.85)
+    parser.add_argument("--self-y-min", type=float, default=-0.55)
+    parser.add_argument("--self-y-max", type=float, default=0.55)
     return parser
 
 
@@ -78,6 +83,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         max_range_m=args.max_range,
         grid_spacing_m=args.grid_spacing,
         min_candidate_confidence=args.min_confidence,
+        self_mask_enabled=not args.disable_self_mask,
+        self_mask_x_min_m=args.self_x_min,
+        self_mask_x_max_m=args.self_x_max,
+        self_mask_y_min_m=args.self_y_min,
+        self_mask_y_max_m=args.self_y_max,
         detector_config=DockLidarConfig(
             z_min=args.z_min,
             z_max=args.z_max,
@@ -93,6 +103,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "input_points": int(len(points)),
         "filtered_points": int(len(debug.filtered_xyz)),
         "removed_near_points": debug.removed_near_points,
+        "removed_self_points": debug.removed_self_points,
         "grid_centers_evaluated": len(debug.grid_centers),
         "raw_candidate_count": len(debug.raw_candidates),
         "candidate_count": len(debug.candidates),

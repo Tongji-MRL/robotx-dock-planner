@@ -12,6 +12,7 @@ from .detector import (
 from .synthetic import SyntheticDockConfig, generate_synthetic_dock_point_cloud
 from .visualize import render_detection_png
 from .search import SearchDebug, UnseededSearchConfig, search_entrance, search_entrances, search_entrances_debug
+from .tracking import EntranceTrack, EntranceTrackConfig, track_entrance_candidates
 from .validation import (
     TemporalCandidate,
     aggregate_temporal_candidates,
@@ -35,6 +36,9 @@ __all__ = [
     "search_entrance",
     "search_entrances",
     "search_entrances_debug",
+    "EntranceTrack",
+    "EntranceTrackConfig",
+    "track_entrance_candidates",
     "TemporalCandidate",
     "aggregate_temporal_candidates",
     "run_synthetic_monte_carlo",
