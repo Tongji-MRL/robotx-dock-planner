@@ -36,6 +36,14 @@ class UnseededSearchConfig:
     min_candidate_confidence: float = 0.35
     dedup_distance_m: float = 0.6
     max_candidates: int = 8
+    # Conservative footprint mask in the input local frame.  For the current
+    # recorded bags this frame is livox_frame; the measured sensor offset is
+    # small, so the mask is deliberately expanded around the LiDAR origin.
+    self_mask_enabled: bool = True
+    self_mask_x_min_m: float = -0.70
+    self_mask_x_max_m: float = 0.85
+    self_mask_y_min_m: float = -0.55
+    self_mask_y_max_m: float = 0.55
 
     def __post_init__(self) -> None:
         observer = np.asarray(self.observer_origin_xy, dtype=float)
@@ -44,6 +52,8 @@ class UnseededSearchConfig:
         for name in (
             "min_range_m", "max_range_m", "grid_spacing_m",
             "min_candidate_confidence", "dedup_distance_m",
+            "self_mask_x_min_m", "self_mask_x_max_m",
+            "self_mask_y_min_m", "self_mask_y_max_m",
         ):
             value = float(getattr(self, name))
             if not math.isfinite(value):
@@ -58,6 +68,12 @@ class UnseededSearchConfig:
             raise ValueError("dedup_distance_m must be positive")
         if self.max_grid_centers < 1 or self.max_candidates < 1:
             raise ValueError("candidate limits must be positive")
+        if not isinstance(self.self_mask_enabled, bool):
+            raise ValueError("self_mask_enabled must be boolean")
+        if self.self_mask_x_min_m >= self.self_mask_x_max_m:
+            raise ValueError("self mask x limits are invalid")
+        if self.self_mask_y_min_m >= self.self_mask_y_max_m:
+            raise ValueError("self mask y limits are invalid")
 
 
 @dataclass(frozen=True)
@@ -66,13 +82,17 @@ class SearchDebug:
 
     filtered_xyz: np.ndarray
     removed_near_points: int
+    removed_self_points: int
     grid_centers: Tuple[Tuple[float, float], ...]
     raw_candidates: Tuple[EntranceCandidate, ...]
     candidates: Tuple[EntranceCandidate, ...]
     selected: Optional[EntranceCandidate]
 
 
-def _filter_ranges(points_xyz: np.ndarray, config: UnseededSearchConfig) -> Tuple[np.ndarray, int]:
+def _filter_ranges(
+    points_xyz: np.ndarray,
+    config: UnseededSearchConfig,
+) -> Tuple[np.ndarray, int, int]:
     points = np.asarray(points_xyz, dtype=float)
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError("points_xyz must have shape (N, 3)")
@@ -81,9 +101,19 @@ def _filter_ranges(points_xyz: np.ndarray, config: UnseededSearchConfig) -> Tupl
     delta = points[:, :2] - observer
     ranges = np.linalg.norm(delta, axis=1)
     in_range = (ranges >= config.min_range_m) & (ranges <= config.max_range_m)
-    kept = points[finite & in_range]
+    in_self_mask = (
+        (points[:, 0] >= config.self_mask_x_min_m)
+        & (points[:, 0] <= config.self_mask_x_max_m)
+        & (points[:, 1] >= config.self_mask_y_min_m)
+        & (points[:, 1] <= config.self_mask_y_max_m)
+    )
+    if config.self_mask_enabled:
+        keep = finite & in_range & ~in_self_mask
+    else:
+        keep = finite & in_range
     removed_near = int(np.count_nonzero(finite & (ranges < config.min_range_m)))
-    return kept, removed_near
+    removed_self = int(np.count_nonzero(finite & in_range & in_self_mask)) if config.self_mask_enabled else 0
+    return points[keep], removed_near, removed_self
 
 
 def _grid_centers(points_xyz: np.ndarray, config: UnseededSearchConfig) -> Tuple[Tuple[float, float], ...]:
@@ -142,7 +172,7 @@ def search_entrances_debug(
 ) -> SearchDebug:
     """Search the local cloud for gap candidates without a supplied center."""
 
-    filtered_xyz, removed_near = _filter_ranges(points_xyz, config)
+    filtered_xyz, removed_near, removed_self = _filter_ranges(points_xyz, config)
     centers = _grid_centers(filtered_xyz, config)
     raw = []
     for center in centers:
@@ -161,6 +191,7 @@ def search_entrances_debug(
     return SearchDebug(
         filtered_xyz=filtered_xyz,
         removed_near_points=removed_near,
+        removed_self_points=removed_self,
         grid_centers=centers,
         raw_candidates=tuple(raw),
         candidates=candidates,

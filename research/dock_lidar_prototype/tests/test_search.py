@@ -53,6 +53,19 @@ class UnseededSearchTests(unittest.TestCase):
         self.assertEqual(debug.removed_near_points, len(self_body))
         self.assertTrue(all(np.linalg.norm(point[:2]) >= 0.5 for point in debug.filtered_xyz))
 
+    def test_expanded_self_footprint_is_removed_even_outside_min_range(self):
+        dock = generate_synthetic_dock_point_cloud(SyntheticDockConfig(
+            center_x=5.0, center_y=0.0, seed=221,
+        ))
+        self_structure = np.asarray((
+            (0.65, 0.50, 0.0),
+            (0.70, -0.50, 0.0),
+            (-0.65, 0.50, 0.0),
+        ))
+        debug = search_entrances_debug(np.vstack((dock, self_structure)), self._config())
+        self.assertGreaterEqual(debug.removed_self_points, len(self_structure))
+        self.assertFalse(np.any(np.all(np.isin(debug.filtered_xyz, self_structure[:, :2]), axis=1)))
+
     def test_empty_or_unrelated_cloud_returns_no_candidate(self):
         rng = np.random.default_rng(23)
         points = np.column_stack((rng.uniform(2, 8, 150), rng.uniform(4, 8, 150), np.zeros(150)))
