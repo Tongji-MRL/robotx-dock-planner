@@ -10,6 +10,7 @@ from rclpy.node import Node
 from std_msgs.msg import Empty, String
 
 from dock_planner.integration import CoarseDockCenterObservationNED
+from usv_task3_executor.ned_pose_adapter import parse_ned_pose_payload
 from dock_planner import (
     CoarseDockInfo,
     DockEntranceObservationNED,
@@ -47,6 +48,7 @@ class Task3Executor(Node):
         self.declare_parameter("stop_distance_inside_m", 1.0)
         self.declare_parameter("retry_max_attempts", 3)
         self.declare_parameter("retry_operation_timeout_s", 30.0)
+        self.declare_parameter("position_timeout_s", 2.0)
         self.flow_manager = Task3FlowManager(
             DockPlanner(
                 PlannerConfig(
@@ -65,9 +67,12 @@ class Task3Executor(Node):
             ),
         )
         self.dry_run = bool(self.get_parameter("dry_run").value)
-        self.latest_mock_coarse_dock_center: Optional[CoarseDockCenterObservationNED] = None
-        self.latest_mock_coarse_dock_frame_id: Optional[str] = None
+        self.latest_coarse_dock_center: Optional[CoarseDockCenterObservationNED] = None
+        self.latest_coarse_dock_frame_id: Optional[str] = None
+        self.latest_coarse_dock_is_mock = False
         self.latest_position_ned_m: Optional[dict[str, float]] = None
+        self.latest_heading_rad: Optional[float] = None
+        self.latest_current_pose: Optional[Pose2D] = None
         self.latest_frame_id: Optional[str] = None
         self.latest_position_message_time: Optional[float] = None
         self.latest_position_received_time: Optional[float] = None
@@ -106,40 +111,60 @@ class Task3Executor(Node):
         receive_time = time.time()
         try:
             payload = json.loads(msg.data)
-            if not isinstance(payload, dict):
-                raise ValueError("message JSON must be an object")
-            if payload.get("valid") is not True:
-                raise ValueError("position message is not valid")
-
-            position = payload["position_ned_m"]
-            if not isinstance(position, dict):
-                raise ValueError("position_ned_m must be an object")
-            position_ned_m = {
-                axis: float(position[axis]) for axis in ("north", "east", "down")
-            }
-            if not all(math.isfinite(value) for value in position_ned_m.values()):
-                raise ValueError("position_ned_m contains a non-finite value")
-
-            frame_id = payload["frame_id"]
-            if not isinstance(frame_id, str) or not frame_id:
-                raise ValueError("frame_id must be a non-empty string")
-
-            message_time = payload["stamp_unix_sec"]
-            sequence = payload["sequence"]
-            if not isinstance(message_time, (int, float)) or not math.isfinite(message_time):
-                raise ValueError("stamp_unix_sec must be finite")
-            if not isinstance(sequence, int):
-                raise ValueError("sequence must be an integer")
+            pose = parse_ned_pose_payload(payload)
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             self.get_logger().warning(f"Ignoring invalid NED position message: {exc}")
             return
 
-        self.latest_position_ned_m = position_ned_m
-        self.latest_frame_id = frame_id
-        self.latest_position_message_time = float(message_time)
+        self.latest_position_ned_m = {
+            "north": pose.north_m,
+            "east": pose.east_m,
+            "down": pose.down_m,
+        }
+        self.latest_heading_rad = pose.heading_rad
+        self.latest_current_pose = Pose2D(
+            x=pose.north_m,
+            y=pose.east_m,
+            yaw=pose.heading_rad,
+        )
+        self.latest_frame_id = pose.frame_id
+        self.latest_position_message_time = pose.timestamp
         self.latest_position_received_time = receive_time
         self.position_received = True
         self.position_valid = True
+        self._try_begin_center_search()
+
+    def _try_begin_center_search(self) -> None:
+        """Start the center-only flow once a fresh pose in the same frame exists."""
+
+        if self.flow_manager.state is not Task3FlowState.IDLE:
+            return
+        if self.latest_coarse_dock_center is None or self.latest_current_pose is None:
+            return
+        if self.latest_coarse_dock_frame_id != self.latest_frame_id:
+            self.get_logger().warning(
+                "Cannot start center search: coarse dock frame %r does not match "
+                "USV pose frame %r."
+                % (self.latest_coarse_dock_frame_id, self.latest_frame_id)
+            )
+            return
+        timeout = float(self.get_parameter("position_timeout_s").value)
+        if (
+            timeout >= 0.0
+            and self.latest_position_received_time is not None
+            and time.time() - self.latest_position_received_time > timeout
+        ):
+            return
+        plan = self.flow_manager.begin_center_search(
+            self.latest_coarse_dock_center,
+            self.latest_current_pose,
+            now=time.time(),
+        )
+        if plan is not None:
+            self.get_logger().info(
+                "Started center-only dock search with %d arc waypoints."
+                % len(plan.arc_waypoints)
+            )
 
     @staticmethod
     def _parse_ned_point(payload: Any, field_name: str) -> NEDPoint:
@@ -156,16 +181,18 @@ class Task3Executor(Node):
             payload = json.loads(msg.data)
             if not isinstance(payload, dict):
                 raise ValueError("message JSON must be an object")
-            if payload.get("mock") is True:
+            is_mock = payload.get("mock") is True
+            if is_mock:
                 if not self.dry_run:
                     raise ValueError("mock coarse dock input requires dry_run=true")
                 if payload.get("source") != "semantic_map_mock":
                     raise ValueError("unsupported mock coarse dock source")
+            if "approximate_corners_ned" not in payload:
                 frame_id = payload.get("frame_id")
-                if frame_id != "mock_ned":
-                    raise ValueError("semantic-map mock frame_id must be mock_ned")
+                if not isinstance(frame_id, str) or not frame_id.strip():
+                    raise ValueError("center-only coarse dock requires frame_id")
                 if payload.get("valid") is not True:
-                    raise ValueError("mock coarse dock message is not valid")
+                    raise ValueError("center-only coarse dock message is not valid")
                 observation = CoarseDockCenterObservationNED(
                     dock_id=payload["dock_id"],
                     center_ned=self._parse_ned_point(payload["center_ned"], "center_ned"),
@@ -173,12 +200,14 @@ class Task3Executor(Node):
                     valid=True,
                     source=payload["source"],
                 )
-                self.latest_mock_coarse_dock_center = observation
-                self.latest_mock_coarse_dock_frame_id = frame_id
+                self.latest_coarse_dock_center = observation
+                self.latest_coarse_dock_frame_id = frame_id.strip()
+                self.latest_coarse_dock_is_mock = is_mock
                 self.get_logger().info(
-                    "Recorded center-only semantic-map mock; flow remains unchanged "
-                    "because no dock corners or verified NED frame are available."
+                    "Recorded center-only coarse dock; waiting for a fresh "
+                    "USV pose in the same NED frame."
                 )
+                self._try_begin_center_search()
                 return
 
             corners = payload["approximate_corners_ned"]
@@ -249,14 +278,19 @@ class Task3Executor(Node):
                     else _finite_json_number(payload["valid_until"], "valid_until")
                 ),
             )
-            current_pose_payload = payload["current_pose"]
-            if not isinstance(current_pose_payload, dict):
-                raise ValueError("current_pose must be an object")
-            current_pose = Pose2D(
-                x=_finite_json_number(current_pose_payload.get("x"), "current_pose.x"),
-                y=_finite_json_number(current_pose_payload.get("y"), "current_pose.y"),
-                yaw=_finite_json_number(current_pose_payload.get("yaw"), "current_pose.yaw"),
-            )
+            current_pose_payload = payload.get("current_pose")
+            if current_pose_payload is None:
+                if self.latest_current_pose is None:
+                    raise ValueError("no current USV NED pose is available")
+                current_pose = self.latest_current_pose
+            else:
+                if not isinstance(current_pose_payload, dict):
+                    raise ValueError("current_pose must be an object")
+                current_pose = Pose2D(
+                    x=_finite_json_number(current_pose_payload.get("x"), "current_pose.x"),
+                    y=_finite_json_number(current_pose_payload.get("y"), "current_pose.y"),
+                    yaw=_finite_json_number(current_pose_payload.get("yaw"), "current_pose.yaw"),
+                )
             self.flow_manager.accept_perception_result(
                 result,
                 current_pose,
@@ -281,25 +315,48 @@ class Task3Executor(Node):
                 "position_received": self.position_received,
                 "position_valid": self.position_valid,
                 "position_ned_m": self.latest_position_ned_m,
+                "heading_rad": self.latest_heading_rad,
                 "frame_id": self.latest_frame_id,
                 "dry_run": self.dry_run,
                 "error": self.flow_manager.error,
                 "retry": self.flow_manager.retry_status,
+                "coarse_dock_center": (
+                    None
+                    if self.latest_coarse_dock_center is None
+                    else {
+                        "dock_id": self.latest_coarse_dock_center.dock_id,
+                        "center_ned": {
+                            "north": self.latest_coarse_dock_center.center_ned.north,
+                            "east": self.latest_coarse_dock_center.center_ned.east,
+                            "down": self.latest_coarse_dock_center.center_ned.down,
+                        },
+                        "timestamp": self.latest_coarse_dock_center.timestamp,
+                        "valid": self.latest_coarse_dock_center.valid,
+                        "source": self.latest_coarse_dock_center.source,
+                        "mock": self.latest_coarse_dock_is_mock,
+                        "frame_id": self.latest_coarse_dock_frame_id,
+                    }
+                ),
+                # Retain the old diagnostic key for existing observers while
+                # exposing the general center-only contract above.
                 "mock_coarse_dock_center": (
                     None
-                    if self.latest_mock_coarse_dock_center is None
+                    if (
+                        self.latest_coarse_dock_center is None
+                        or not self.latest_coarse_dock_is_mock
+                    )
                     else {
-                        "dock_id": self.latest_mock_coarse_dock_center.dock_id,
+                        "dock_id": self.latest_coarse_dock_center.dock_id,
                         "center_ned": {
-                            "north": self.latest_mock_coarse_dock_center.center_ned.north,
-                            "east": self.latest_mock_coarse_dock_center.center_ned.east,
-                            "down": self.latest_mock_coarse_dock_center.center_ned.down,
+                            "north": self.latest_coarse_dock_center.center_ned.north,
+                            "east": self.latest_coarse_dock_center.center_ned.east,
+                            "down": self.latest_coarse_dock_center.center_ned.down,
                         },
-                        "timestamp": self.latest_mock_coarse_dock_center.timestamp,
-                        "valid": self.latest_mock_coarse_dock_center.valid,
-                        "source": self.latest_mock_coarse_dock_center.source,
+                        "timestamp": self.latest_coarse_dock_center.timestamp,
+                        "valid": self.latest_coarse_dock_center.valid,
+                        "source": self.latest_coarse_dock_center.source,
                         "mock": True,
-                        "frame_id": self.latest_mock_coarse_dock_frame_id,
+                        "frame_id": self.latest_coarse_dock_frame_id,
                     }
                 ),
             },

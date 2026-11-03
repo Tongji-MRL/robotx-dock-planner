@@ -10,6 +10,7 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("dock_id", default_value="0"),
             DeclareLaunchArgument("dry_run", default_value="true"),
+            DeclareLaunchArgument("frame_id", default_value="mock_ned"),
             Node(
                 package="usv_task3_executor",
                 executable="task3_semantic_map_mock_adapter",
@@ -22,6 +23,7 @@ def generate_launch_description():
                         "dry_run": ParameterValue(
                             LaunchConfiguration("dry_run"), value_type=bool
                         ),
+                        "frame_id": LaunchConfiguration("frame_id"),
                     }
                 ],
             ),

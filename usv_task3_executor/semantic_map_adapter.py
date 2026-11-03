@@ -18,7 +18,10 @@ def _finite_number(value: Any, field_name: str) -> float:
 
 
 def parse_semantic_map_dock(
-    data: str, dock_id: int, timestamp: float
+    data: str,
+    dock_id: int,
+    timestamp: float,
+    frame_id: str = "mock_ned",
 ) -> dict[str, Any]:
     """Return one selected dock as an explicitly marked center-only mock."""
 
@@ -35,6 +38,8 @@ def parse_semantic_map_dock(
     if isinstance(dock_id, bool) or not isinstance(dock_id, int):
         raise ValueError("dock_id parameter must be an integer")
     timestamp = _finite_number(timestamp, "timestamp")
+    if not isinstance(frame_id, str) or not frame_id.strip():
+        raise ValueError("frame_id must be a nonempty string")
 
     matches = []
     for item in objects:
@@ -73,7 +78,7 @@ def parse_semantic_map_dock(
         "valid": True,
         "source": "semantic_map_mock",
         "mock": True,
-        "frame_id": "mock_ned",
+        "frame_id": frame_id.strip(),
     }
 
 
@@ -87,8 +92,10 @@ def main(args=None) -> None:
             super().__init__("task3_semantic_map_mock_adapter")
             self.declare_parameter("dock_id", 0)
             self.declare_parameter("dry_run", True)
+            self.declare_parameter("frame_id", "mock_ned")
             self.dock_id = self.get_parameter("dock_id").value
             self.dry_run = self.get_parameter("dry_run").value
+            self.frame_id = str(self.get_parameter("frame_id").value)
             if isinstance(self.dock_id, bool) or not isinstance(self.dock_id, int):
                 raise ValueError("dock_id ROS parameter must be an integer")
 
@@ -109,7 +116,7 @@ def main(args=None) -> None:
             timestamp = self.get_clock().now().nanoseconds / 1_000_000_000.0
             try:
                 observation = parse_semantic_map_dock(
-                    msg.data, self.dock_id, timestamp
+                    msg.data, self.dock_id, timestamp, self.frame_id
                 )
             except ValueError as exc:
                 self.get_logger().warning(
@@ -127,7 +134,7 @@ def main(args=None) -> None:
                 "Published semantic-map mock dock center "
                 f"id={observation['dock_id']} "
                 f"NED=({center['north']:.3f}, {center['east']:.3f}, "
-                f"{center['down']:.3f}) frame=mock_ned"
+                f"{center['down']:.3f}) frame={observation['frame_id']}"
             )
 
     rclpy.init(args=args)

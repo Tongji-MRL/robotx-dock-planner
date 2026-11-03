@@ -42,6 +42,15 @@ class SemanticMapDockParserTest(unittest.TestCase):
         self.assertEqual(result["dock_id"], "7")
         self.assertEqual(result["center_ned"]["north"], 4.0)
 
+    def test_uses_explicit_common_frame(self):
+        result = parse_semantic_map_dock(
+            semantic_map({"id": 0, "type": "dock", "NED_position": [1, 2, 3]}),
+            dock_id=0,
+            timestamp=3.0,
+            frame_id="usv_fcu_local_ned",
+        )
+        self.assertEqual(result["frame_id"], "usv_fcu_local_ned")
+
     def test_rejects_missing_dock(self):
         with self.assertRaisesRegex(ValueError, "was not found"):
             parse_semantic_map_dock(

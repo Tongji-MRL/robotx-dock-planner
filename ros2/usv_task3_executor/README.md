@@ -45,7 +45,36 @@ ros2 launch usv_task3_executor task3_semantic_map_mock_adapter.launch.py
 ros2 launch usv_task3_executor task3_executor.launch.py
 ```
 
-Set another ID with `dock_id:=N`. Mock publication is disabled when `dry_run:=false`. The executor records this center observation only while its own `dry_run` parameter is true. It does not pass this center-only mock into `Task3FlowManager`: the existing flow requires four approximate corners, which the semantic-map input does not provide. The executor does not require or confirm `px4_local_ned`; this adapter preserves the honest `mock_ned` label, and the coordinates must not be treated as verified PX4 local NED.
+Set another ID with `dock_id:=N`. Mock publication is disabled when
+`dry_run:=false`. The executor starts the bounded center-search flow after it
+has both the center and a fresh USV pose with the same `frame_id`. A frame
+mismatch is rejected instead of combining unrelated UAV and USV local NED
+coordinates.
+
+## USV pose from MAVROS
+
+`task3_ned_pose_adapter` converts MAVROS ENU odometry into the Task 3 NED
+contract, including heading and sequence number:
+
+```bash
+ros2 launch usv_task3_executor task3_ned_pose_adapter.launch.py
+```
+
+It subscribes to `/mavros/local_position/odom` and publishes
+`/tongji_mrl/twave/ned_position` with frame `usv_fcu_local_ned`. Do not run it
+at the same time as another publisher on that output topic.
+
+For a dry-run semantic-map message whose coordinates were deliberately written
+in that same FCU-local frame, launch the mock adapter with:
+
+```bash
+ros2 launch usv_task3_executor task3_semantic_map_mock_adapter.launch.py \
+  frame_id:=usv_fcu_local_ned
+```
+
+Setting the same label does not transform coordinates. UAV-local coordinates
+must first go through the UAV-NED to USV-NED conversion before they can use
+`usv_fcu_local_ned`.
 
 For a selected object, the published JSON is:
 
