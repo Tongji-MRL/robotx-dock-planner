@@ -1,12 +1,18 @@
-# Task 3 子状态机内部编码表（草案 v0.3）
+# Task 3 子状态机内部编码与 FSM 对接说明（内部 v0.4）
 
-更新时间：2026-10-11
+更新时间：2026-11-03
+
+> **线上协议以 `TASK3_FSM_ENCODING.md` 为准。**
+> `Tongji-MRL/FSM` 的 `mission_planner_node` 只读取
+> `vehicle/task/progress/error`，不解析本文的 14 位状态码。本文的二进制表只用于
+> Task3 内部日志、调试和恢复策略；发送到 `/tongji_mrl/twave/progress` 时必须经过
+> `dock_planner.fsm_contract` 转换为简化 JSON。
 
 ## 1. 14 位内部状态码
 
-主规划器通信格式以 FSM `mission_planner_node.py` 为准，线上使用
-`vehicle/task/progress/error/command` JSON。以下 14 位编码继续用于 Task3 内部日志、
-错误目录和必要的诊断字段，不直接替代 FSM 的 `progress` 字符串。
+主规划器通信格式以 FSM `mission_planner_node.py` 为准，线上使用简化 JSON；以下 14 位
+编码只用于 Task3 内部日志、错误目录和必要的诊断字段，不直接替代 FSM 的 `progress`
+字符串。
 
 ```text
 V TT PPPP EEEE CCC
@@ -17,8 +23,8 @@ V TT PPPP EEEE CCC
 └──────────────── vehicle：执行车辆，1 bit
 ```
 
-普通状态上报必须使用 `command=000`。跨机传输的坐标、颜色序列、bay/window ID、
-置信度和 checkpoint 使用结构化 payload，不塞进 14 位状态码。
+跨机传输的坐标、颜色序列、bay/window ID、置信度和 checkpoint 使用结构化 JSON 字段，
+不塞进 14 位状态码。普通 FSM progress 上报不携带二进制 command。
 
 错误目录版本固定为 `task3-errors-v1`，每条结构化状态消息都必须携带该版本。总规划器
 发现本地目录版本与消息版本不一致时，应拒绝自动解释并进入安全保持。

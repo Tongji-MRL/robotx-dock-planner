@@ -96,6 +96,8 @@ from .task3_ros_contract import (
 )
 from .fsm_contract import (
     FSM_TASK3_FINISH_PROGRESS,
+    FSM_PROGRESS_REQUIRED_FIELDS,
+    TASK3_WIRE_PROGRESS,
     correct_bay_to_fsm_progress,
     docking_result_to_fsm_message,
     executor_state_to_fsm_progress,
@@ -103,6 +105,7 @@ from .fsm_contract import (
     normalize_fsm_task_command,
     sprayer_window_to_fsm_progress,
     safe_stop_ack_progress,
+    validate_fsm_progress,
 )
 
 __all__ = [
@@ -169,8 +172,9 @@ __all__ = [
     "CorrectBayInfo", "HeartbeatMonitor", "SprayerWindowInfo",
     "Task3RosMessageFactory", "normalize_task_command",
     "validate_vehicle_heartbeat",
-    "FSM_TASK3_FINISH_PROGRESS", "normalize_fsm_task_command", "executor_state_to_fsm_progress",
+    "FSM_TASK3_FINISH_PROGRESS", "FSM_PROGRESS_REQUIRED_FIELDS", "TASK3_WIRE_PROGRESS",
+    "normalize_fsm_task_command", "executor_state_to_fsm_progress",
     "correct_bay_to_fsm_progress", "docking_result_to_fsm_message",
     "sprayer_window_to_fsm_progress", "firefighting_result_to_fsm_message",
-    "safe_stop_ack_progress",
+    "safe_stop_ack_progress", "validate_fsm_progress",
 ]

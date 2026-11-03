@@ -16,6 +16,39 @@ FSM_RESULT_TOPIC = "/tongji_mrl/twave/result"
 FSM_CHECKPOINT_TOPIC = "/tongji_mrl/twave/checkpoint"
 FSM_TASK3_FINISH_PROGRESS = "TASK3_FINISH"
 
+# These are the only fields that the FSM mission_planner_node uses when it
+# consumes a vehicle progress report.  Extra fields are allowed for the
+# structured bay/window result data, but packed status integers are not part
+# of the wire contract.
+FSM_PROGRESS_REQUIRED_FIELDS = ("vehicle", "task", "progress", "error")
+TASK3_WIRE_PROGRESS = {
+    "TASK3_READY",
+    "TASK3_WAIT_DOCK_OBSERVATION",
+    "TASK3_APPROACH_DOCK",
+    "TASK3_SEARCH_DOCK",
+    "TASK3_CHECK_BAY_COLOR",
+    "TASK3_NEXT_BAY",
+    "TASK3_TERMINAL_DOCKING",
+    "TASK3_DOCKED",
+    "TASK3_WAIT_RED_WINDOW",
+    "TASK3_AIMING",
+    "TASK3_SPRAYING",
+    "TASK3_VERIFY_GREEN",
+    "TASK3_COLOR_SEQUENCE",
+    "TASK3_WAIT_UAV_DELIVERY",
+    "TASK3_EXIT_RETURN",
+    FSM_TASK3_FINISH_PROGRESS,
+    "TASK3_ERROR",
+    "TASK3_BAY_CONFIRMED",
+    "TASK3_DOCKING_RESULT",
+    "TASK3_SPRAYER_WINDOW",
+    "TASK3_FIREFIGHTING_RESULT",
+    "TASK3_ACK",
+    "TASK3_END_ACK",
+    "HEARTBEAT_STALE",
+    "HEARTBEAT_RECOVERED",
+}
+
 
 def _text(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
@@ -37,6 +70,36 @@ def _legacy_message(
         "error": error,
         **extra,
     }
+
+
+def validate_fsm_progress(value: Mapping[str, Any], *, allow_task4: bool = False) -> None:
+    """Validate the small progress envelope consumed by ``mission_planner_node``.
+
+    The upstream FSM does not decode the former 14-bit ``status_code`` or
+    ``status_bits`` fields.  Keeping validation here prevents a child module
+    from accidentally publishing the old packed representation on the ROS
+    boundary while still allowing structured result fields beside the four
+    fields used by the planner.
+    """
+
+    if not isinstance(value, Mapping):
+        raise TypeError("FSM progress must be a JSON object")
+    vehicle = _text(value.get("vehicle"), "vehicle").lower()
+    if vehicle not in {"uav", "usv"}:
+        raise ValueError("vehicle must be uav or usv")
+    task = _text(value.get("task"), "task").upper()
+    allowed_tasks = {"MAP", "TASK1", "TASK3"}
+    if allow_task4:
+        allowed_tasks.add("TASK4")
+    if task not in allowed_tasks:
+        raise ValueError(f"unsupported FSM progress task: {task}")
+    progress = _text(value.get("progress"), "progress").upper()
+    if task == "TASK3" and progress not in TASK3_WIRE_PROGRESS:
+        raise ValueError(f"unsupported TASK3 progress: {progress}")
+    if value.get("error") is not None and not isinstance(value.get("error"), str):
+        raise ValueError("error must be null or a string")
+    if "status_code" in value or "status_bits" in value:
+        raise ValueError("packed status fields are internal-only and cannot be sent to FSM")
 
 
 def normalize_fsm_task_command(value: Mapping[str, Any]) -> dict[str, Any] | None:

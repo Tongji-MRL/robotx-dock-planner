@@ -58,13 +58,14 @@ result = planner.plan(
 - `dock_planner/sprayer_interfaces.py`：云台/喷水感知结果的数据契约。
 - `dock_planner/watering.py`：停泊后的瞄准、喷水和绿色确认状态逻辑；不直接控制硬件。
 - `dock_planner/bay_search.py`：入口中心关联、bay 去重、颜色拒绝和 terminal 失败记忆。
-- `dock_planner/task3_status_codec.py`：Task3 14 位状态码、固定错误目录和恢复动作解码。
+- `TASK3_FSM_ENCODING.md`：按 `Tongji-MRL/FSM` 主规划器整理的线上简化编码和接口表。
+- `dock_planner/task3_status_codec.py`：Task3 内部诊断用的 14 位状态码、固定错误目录和恢复动作解码；不直接发送到 FSM。
 - Task3 executor 对感知、搜索和颜色确认等暂态故障先在当前步骤内限次/限时重试，只有
   重试耗尽才发布最终 `error` 并进入 `ERROR`；`retry_max_attempts` 和
   `retry_operation_timeout_s` 可作为 ROS 参数调整。
 - `dock_planner/task3_subfsm_bridge.py`：Task3 子状态机与总规划器通信、Task4 抢占和恢复逻辑。
 - `dock_planner/task3_ros_contract.py`：Task3 侧 progress/report/command/ACK、正确泊位、喷水窗口和双机 heartbeat 的纯 JSON 契约；统一 Orin 中的通用通信归 `robotx_communication`，车辆 heartbeat 由 `usv_state_machine` 发布。
-- `dock_planner/fsm_contract.py`：对固定 FSM `mission_planner_node.py` 的 ROS legacy JSON 适配，线上字段为 `vehicle/task/progress/error/command`，不把内部 14 位状态码直接发给主规划器。
+- `dock_planner/fsm_contract.py`：对固定 FSM `mission_planner_node.py` 的 ROS 简化 JSON 适配；进度上报使用 `vehicle/task/progress/error`，主规划器命令才使用 `command`，不把内部 14 位状态码直接发给主规划器。
 - `dock_planner/__init__.py`：公开导入接口。
 - `TASK3_COMMUNICATION_PROTOCOL.md`：Task3 步骤、全部错误码、command、跨机数据和 Task4 恢复协议。
 - `TASK3_ERROR_CATALOG.md`：Task3 128 个步骤特有错误及通用错误的独立查表文档。

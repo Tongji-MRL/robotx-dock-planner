@@ -18,6 +18,11 @@ class Task3SubFSMBridgeTests(unittest.TestCase):
         report = self.bridge.update_task3_step(Task3Step.SEARCH_DOCK)
         self.assertEqual(report.status.command, PlannerCommand.NONE)
         self.assertTrue(report.status.bit_string().endswith("000"))
+        wire = report.to_dict()
+        self.assertEqual(wire["progress"], "TASK3_SEARCH_DOCK")
+        self.assertIsNone(wire["error"])
+        self.assertNotIn("status_code", wire)
+        self.assertIn("status_code", report.to_internal_dict())
 
     def test_task4_from_search_replans_approach_after_resume(self):
         self.bridge.update_task3_step(

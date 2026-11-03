@@ -14,14 +14,8 @@ import time
 import uuid
 from typing import Any, Callable, Mapping
 
-from .task3_status_codec import (
-    CommonError,
-    PlannerCommand,
-    Task3Step,
-    TaskCode,
-    TaskStatusCode,
-    VehicleCode,
-)
+from .task3_status_codec import Task3Step
+from .fsm_contract import validate_fsm_progress
 
 
 PROTOCOL_VERSION = "task3-ros-v1"
@@ -190,7 +184,11 @@ class SprayerWindowInfo:
 
 
 class Task3RosMessageFactory:
-    """Create ordered Task3 messages for the main planner."""
+    """Create compact progress messages consumed by the fixed FSM planner.
+
+    The former 14-bit status fields remain available to internal diagnostics,
+    but are deliberately absent from this ROS-facing factory output.
+    """
 
     def __init__(
         self,
@@ -207,14 +205,13 @@ class Task3RosMessageFactory:
     def _base(self, kind: str) -> dict[str, Any]:
         self._sequence += 1
         return {
-            "protocol_version": PROTOCOL_VERSION,
-            "message_id": _nonempty(self._message_id_factory(), "message_id"),
+            "vehicle": "usv",
+            "task": "TASK3",
+            "progress": None,
+            "error": None,
+            "kind": kind,
             "run_id": self.run_id,
             "sequence": self._sequence,
-            "sent_at_unix_ms": _positive_int(self._clock_ms(), "sent_at_unix_ms"),
-            "source": "T-Wave",
-            "task": "TASK3",
-            "kind": kind,
         }
 
     def progress_from_executor_state(self, value: Mapping[str, Any]) -> dict[str, Any]:
@@ -225,27 +222,20 @@ class Task3RosMessageFactory:
             step = _FLOW_TO_STEP[state]
         except KeyError as exc:
             raise ValueError(f"unsupported Task3 executor state: {state}") from exc
-        error = CommonError.UNKNOWN_ERROR if state == "ERROR" else CommonError.NONE
-        status = TaskStatusCode(
-            VehicleCode.USV,
-            TaskCode.TASK3,
-            step,
-            error,
-            PlannerCommand.NONE,
-        )
+        progress = "TASK3_ERROR" if state == "ERROR" else f"TASK3_{step.name}"
         message = self._base("progress")
         message.update({
-            "message_type": "TASK3_PROGRESS",
-            "status_code": status.pack(),
-            "status_bits": status.bit_string(),
-            "status": status.describe(),
-            "payload": {
-                "executor_state": state,
-                "ready_for_task_logic": bool(value.get("ready_for_task_logic", False)),
-                "dry_run": bool(value.get("dry_run", False)),
-                "detail": str(value.get("detail", "")),
-            },
+            "progress": progress,
+            "error": (str(value.get("error") or value.get("detail") or "UNKNOWN_ERROR")
+                      if state == "ERROR" else None),
+            "executor_state": state,
+            "ready_for_task_logic": bool(value.get("ready_for_task_logic", False)),
+            "dry_run": bool(value.get("dry_run", False)),
+            "detail": str(value.get("detail", "")),
         })
+        if value.get("retry") is not None:
+            message["retry"] = value["retry"]
+        validate_fsm_progress(message)
         return message
 
     def docking_report(self, info: CorrectBayInfo) -> dict[str, Any]:
@@ -254,25 +244,20 @@ class Task3RosMessageFactory:
         if not info.docking_confirmed:
             raise ValueError("docking report requires docking_confirmed=true")
         message = self._base("task_report")
-        message["payload"] = {
-            "task": "TASK3",
+        message.update({
+            "progress": "TASK3_DOCKING_RESULT",
             "phase": "DOCKING_COMPLETE",
             "authority": "USV",
             "official_report": {
                 "type": "docking",
                 "vehicle_id": "T-Wave",
                 "bay_id": info.bay_id,
-            },
-            "result": {
                 "dock_id": info.dock_id,
-                "bay_id": info.bay_id,
                 "confidence": info.confidence,
-                "docking_confirmed": True,
-                "source": info.source,
             },
             "completed_at_unix_ms": info.confirmed_at_unix_ms,
-            "failure_reason": None,
-        }
+        })
+        validate_fsm_progress(message)
         return message
 
     def correct_bay_progress(self, info: CorrectBayInfo) -> dict[str, Any]:
@@ -280,46 +265,34 @@ class Task3RosMessageFactory:
 
         if not isinstance(info, CorrectBayInfo):
             raise TypeError("info must be CorrectBayInfo")
-        step = Task3Step.DOCKED if info.docking_confirmed else Task3Step.CHECK_BAY_COLOR
-        status = TaskStatusCode(VehicleCode.USV, TaskCode.TASK3, step)
         message = self._base("progress")
         message.update({
-            "message_type": "TASK3_CORRECT_BAY",
-            "status_code": status.pack(),
-            "status_bits": status.bit_string(),
-            "status": status.describe(),
-            "payload": {
-                "dock_id": info.dock_id,
-                "bay_id": info.bay_id,
-                "confidence": info.confidence,
-                "docking_confirmed": info.docking_confirmed,
-                "confirmed_at_unix_ms": info.confirmed_at_unix_ms,
-                "source": info.source,
-            },
+            "progress": "TASK3_BAY_CONFIRMED",
+            "dock_id": info.dock_id,
+            "bay_id": info.bay_id,
+            "confidence": info.confidence,
+            "docking_confirmed": info.docking_confirmed,
+            "confirmed_at_unix_ms": info.confirmed_at_unix_ms,
+            "source": info.source,
         })
+        validate_fsm_progress(message)
         return message
 
     def sprayer_window_progress(self, info: SprayerWindowInfo) -> dict[str, Any]:
         if not isinstance(info, SprayerWindowInfo):
             raise TypeError("info must be SprayerWindowInfo")
-        step = Task3Step.VERIFY_GREEN if info.color == "GREEN" else Task3Step.SPRAYING
-        status = TaskStatusCode(VehicleCode.USV, TaskCode.TASK3, step)
         message = self._base("progress")
         message.update({
-            "message_type": "TASK3_SPRAYER_WINDOW",
-            "status_code": status.pack(),
-            "status_bits": status.bit_string(),
-            "status": status.describe(),
-            "payload": {
-                "window_id": info.window_id,
-                "color": info.color,
-                "confidence": info.confidence,
-                "pump_off": info.pump_off,
-                "green_confirmed_duration_s": info.green_confirmed_duration_s,
-                "completion_confirmed": info.completion_confirmed,
-                "source": info.source,
-            },
+            "progress": "TASK3_SPRAYER_WINDOW",
+            "window_id": info.window_id,
+            "color": info.color,
+            "confidence": info.confidence,
+            "pump_off": info.pump_off,
+            "green_confirmed_duration_s": info.green_confirmed_duration_s,
+            "completion_confirmed": info.completion_confirmed,
+            "source": info.source,
         })
+        validate_fsm_progress(message)
         return message
 
     def firefighting_report(self, info: SprayerWindowInfo) -> dict[str, Any]:
@@ -331,26 +304,19 @@ class Task3RosMessageFactory:
                 "and at least 5 seconds confirmation"
             )
         message = self._base("task_report")
-        message["payload"] = {
-            "task": "TASK3",
+        message.update({
+            "progress": "TASK3_FIREFIGHTING_RESULT",
             "phase": "FIREFIGHTING_COMPLETE",
             "authority": "USV",
             "official_report": {
                 "type": "firefighting",
                 "vehicle_id": "T-Wave",
                 "window_id": info.window_id,
-            },
-            "result": {
-                "window_id": info.window_id,
-                "final_color": info.color,
-                "confidence": info.confidence,
-                "pump_off": info.pump_off,
-                "green_confirmed_duration_s": info.green_confirmed_duration_s,
-                "source": info.source,
+                "color": info.color,
             },
             "completed_at_unix_ms": info.observed_at_unix_ms,
-            "failure_reason": None,
-        }
+        })
+        validate_fsm_progress(message)
         return message
 
     def ack(
@@ -363,13 +329,16 @@ class Task3RosMessageFactory:
     ) -> dict[str, Any]:
         normalized = normalize_task_command(command)
         message = self._base("ack")
-        message["payload"] = {
+        message.update({
+            "progress": "TASK3_ACK",
+            "error": None if accepted else (str(detail) or "COMMAND_REJECTED"),
             "in_reply_to": normalized["command_id"],
-            "command": normalized["command"],
+            "command_name": normalized["command"],
             "accepted": bool(accepted),
             "state": _nonempty(state, "state"),
             "detail": str(detail),
-        }
+        })
+        validate_fsm_progress(message)
         return message
 
     def heartbeat_fault(self, vehicle_id: str, *, stale: bool, age_s: float) -> dict[str, Any]:
@@ -378,16 +347,14 @@ class Task3RosMessageFactory:
             raise ValueError("vehicle_id must be T-Wave or T-Sky")
         age = _finite(age_s, "age_s")
         message = self._base("fault")
-        message["payload"] = {
-            "fault_code": f"{vehicle_id.upper().replace('-', '_')}_HEARTBEAT_LOST",
+        message.update({
+            "progress": "HEARTBEAT_STALE" if stale else "HEARTBEAT_RECOVERED",
+            "error": "COMMUNICATION_LOST" if stale else None,
+            "heartbeat_vehicle": vehicle_id,
+            "age_s": age,
             "severity": "STOP" if stale else "RECOVERED",
-            "task": "TASK3",
-            "detail": f"heartbeat age {age:.3f} s",
-            "recoverable": True,
-            "vehicle_id": vehicle_id,
-            "active": bool(stale),
-            "occurred_at_unix_ms": message["sent_at_unix_ms"],
-        }
+        })
+        validate_fsm_progress(message)
         return message
 
 

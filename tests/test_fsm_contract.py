@@ -9,6 +9,7 @@ from dock_planner.fsm_contract import (
     sprayer_window_to_fsm_progress,
     safe_stop_ack_progress,
     task4_ack_progress,
+    validate_fsm_progress,
 )
 
 
@@ -81,6 +82,26 @@ class FsmContractTests(unittest.TestCase):
         finished = executor_state_to_fsm_progress({"state": "FINISHED"})
         self.assertEqual(finished["progress"], FSM_TASK3_FINISH_PROGRESS)
         self.assertIsNone(finished["error"])
+
+    def test_wire_progress_rejects_packed_status_fields(self):
+        with self.assertRaises(ValueError):
+            validate_fsm_progress({
+                "vehicle": "usv",
+                "task": "TASK3",
+                "progress": "TASK3_SEARCH_DOCK",
+                "error": None,
+                "status_bits": "1 10 0011 0000 000",
+            })
+
+    def test_wire_progress_accepts_structured_task3_result(self):
+        validate_fsm_progress({
+            "vehicle": "usv",
+            "task": "TASK3",
+            "progress": "TASK3_SPRAYER_WINDOW",
+            "error": None,
+            "window_id": 1,
+            "color": "RED",
+        })
 
     def test_correct_bay_and_window_keep_structured_fields(self):
         bay = correct_bay_to_fsm_progress({

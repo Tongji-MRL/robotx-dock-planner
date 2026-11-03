@@ -1,12 +1,12 @@
-"""Compact Task 3 child-FSM internal status encoding.
+"""Compact Task 3 child-FSM *internal* diagnostic status encoding.
 
 The 14-bit diagnostic value follows the team layout exactly::
 
     vehicle(1) | task(2) | progress(4) | error(4) | command(3)
 
 ``command=000`` is the normal diagnostic status value.  The ROS boundary to
-the fixed FSM mission planner uses the legacy JSON progress field instead of
-putting this integer directly on the wire.
+the fixed FSM mission planner uses the simplified JSON progress fields from
+``fsm_contract.py``; this integer must never be sent on that wire.
 
 Error codes are scoped by progress.  Codes 0000..0111 keep the same meaning
 for every progress step; codes 1000..1111 are step-specific and may be reused

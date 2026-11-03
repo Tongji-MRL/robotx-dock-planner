@@ -29,6 +29,7 @@ from .task3_status_codec import (
     TaskStatusCode,
     VehicleCode,
     error_definition,
+    step_name,
 )
 
 
@@ -106,6 +107,34 @@ class SubFSMReport:
     in_reply_to: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the compact FSM wire shape.
+
+        The packed status remains available through ``to_internal_dict`` for
+        diagnostics, but it must not be sent to the main mission planner.
+        """
+        task_name = self.status.task.name
+        if self.status.task is TaskCode.TASK3:
+            progress = "TASK3_FINISH" if self.status.step == int(Task3Step.COMPLETE) else f"TASK3_{step_name(self.status.task, self.status.step)}"
+        elif self.status.task is TaskCode.TASK4:
+            progress = f"TASK4_{step_name(self.status.task, self.status.step)}"
+        else:
+            progress = task_name
+        error = None if self.status.error == int(CommonError.NONE) else error_definition(
+            self.status.task, self.status.step, self.status.error
+        ).name
+        value = {
+            "vehicle": "usv" if self.status.vehicle is VehicleCode.USV else "uav",
+            "task": task_name,
+            "progress": progress,
+            "error": error,
+            **dict(self.payload),
+        }
+        if self.in_reply_to is not None:
+            value["in_reply_to"] = self.in_reply_to
+        return value
+
+    def to_internal_dict(self) -> dict[str, Any]:
+        """Return the former diagnostic representation for local logs only."""
         return {
             "sequence": self.sequence,
             "run_id": self.run_id,

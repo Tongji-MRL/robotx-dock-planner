@@ -19,15 +19,23 @@ class Task3RosContractTests(unittest.TestCase):
             message_id_factory=lambda: next(ids),
         )
 
-    def test_executor_state_becomes_14_bit_progress(self):
+    def test_executor_state_uses_fsm_progress_shape(self):
         message = self.factory.progress_from_executor_state({
             "state": "SEARCH_DOCK",
             "ready_for_task_logic": True,
             "dry_run": False,
         })
-        self.assertEqual(message["kind"], "progress")
-        self.assertEqual(message["status_bits"], "1 10 0011 0000 000")
-        self.assertEqual(message["status"]["step"], "SEARCH_DOCK")
+        self.assertEqual(
+            {key: message[key] for key in ("vehicle", "task", "progress", "error")},
+            {
+                "vehicle": "usv",
+                "task": "TASK3",
+                "progress": "TASK3_SEARCH_DOCK",
+                "error": None,
+            },
+        )
+        self.assertNotIn("status_code", message)
+        self.assertNotIn("status_bits", message)
 
     def test_docking_report_requires_authoritative_confirmation(self):
         raw = {
@@ -40,19 +48,21 @@ class Task3RosContractTests(unittest.TestCase):
         }
         unconfirmed = CorrectBayInfo.from_mapping(raw)
         progress = self.factory.correct_bay_progress(unconfirmed)
-        self.assertEqual(progress["message_type"], "TASK3_CORRECT_BAY")
-        self.assertEqual(progress["payload"]["bay_id"], 2)
-        self.assertFalse(progress["payload"]["docking_confirmed"])
+        self.assertEqual(progress["progress"], "TASK3_BAY_CONFIRMED")
+        self.assertEqual(progress["bay_id"], 2)
+        self.assertFalse(progress["docking_confirmed"])
         with self.assertRaises(ValueError):
             self.factory.docking_report(unconfirmed)
 
         raw["docking_confirmed"] = True
         report = self.factory.docking_report(CorrectBayInfo.from_mapping(raw))
-        official = report["payload"]["official_report"]
+        official = report["official_report"]
         self.assertEqual(official, {
             "type": "docking",
             "vehicle_id": "T-Wave",
             "bay_id": 2,
+            "dock_id": "dock-A",
+            "confidence": 0.94,
         })
 
     def test_bay_id_is_limited_to_official_range(self):
@@ -78,7 +88,8 @@ class Task3RosContractTests(unittest.TestCase):
             "source": "sprayer_vision",
         })
         progress = self.factory.sprayer_window_progress(info)
-        self.assertEqual(progress["message_type"], "TASK3_SPRAYER_WINDOW")
+        self.assertEqual(progress["progress"], "TASK3_SPRAYER_WINDOW")
+        self.assertEqual(progress["color"], "RED")
         self.assertFalse(info.firefighting_complete)
         with self.assertRaises(ValueError):
             self.factory.firefighting_report(info)
@@ -98,8 +109,13 @@ class Task3RosContractTests(unittest.TestCase):
         self.assertTrue(info.firefighting_complete)
         report = self.factory.firefighting_report(info)
         self.assertEqual(
-            report["payload"]["official_report"],
-            {"type": "firefighting", "vehicle_id": "T-Wave", "window_id": 3},
+            report["official_report"],
+            {
+                "type": "firefighting",
+                "vehicle_id": "T-Wave",
+                "window_id": 3,
+                "color": "GREEN",
+            },
         )
 
         for field, bad in (

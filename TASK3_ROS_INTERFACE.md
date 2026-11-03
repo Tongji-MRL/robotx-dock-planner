@@ -1,11 +1,13 @@
 # Task3 子状态机与 FSM 主规划器 ROS 2 接口
 
 更新时间：2026-10-18
-外部协议：FSM `mission_planner_node` legacy JSON
+外部协议：FSM `mission_planner_node` 简化 JSON（`fsm-simple-v1`）
 
 主规划器以 `Tongji-MRL/FSM` 的 `mission_planner_node.py` 为准。Task3 ROS 边界使用
-`std_msgs/msg/String`，内容固定为 `vehicle/task/progress/error/command` 字段；原来的
-`task3-ros-v1` envelope 只保留为纯 Python 内部测试结构，不作为主规划器线上消息格式。
+`std_msgs/msg/String`，进度上报的核心字段为 `vehicle/task/progress/error`；主规划器发给
+车辆的命令另带 `command`。泊位、喷水窗口、颜色序列和 checkpoint 作为同一 JSON 中的
+结构化字段传输。原来的 `task3-ros-v1` envelope 和 14 位状态码只保留在纯 Python
+内部诊断，不作为主规划器线上协议。详细表见 `TASK3_FSM_ENCODING.md`。
 
 ## 1. 责任边界
 
@@ -23,7 +25,8 @@
 - `usv_state_machine` 发布整条 USV 的 heartbeat，并把当前任务和 Task3 子状态作为字段；
 - Task3 子状态机产生 `correct_bay` 和 `sprayer_window` 事件，但不单独发布车辆 heartbeat；
 - `robotx_communication` 负责通用转发；FSM 主规划器负责本组 `task_cmd`、`progress`、`result`、`status` 和 `fault`；
-- `task3` 保留 bay 选择、靠泊完成、喷水完成和 14 位 Task3 状态语义。
+- `task3` 保留 bay 选择、靠泊完成和喷水完成语义；14 位 Task3 码只用于本地诊断，
+  不作为 FSM 线上字段。
 
 在通信负责人确认字段前，不要把本文件中的 adapter 再复制成第二个可执行包。最终同步到
 `~/robotx_ws/src` 时，应通过 staging 组合为 `robotx_communication`、`task3` 和
@@ -99,9 +102,9 @@ Task3 完成时，内部状态 `FINISHED`/`COMPLETE` 统一转换为 FSM 要求�
 FSM 只有在 UAV 和 USV 都收到 `TASK3_FINISH` 且 `error` 为 `null` 时，才会把总状态推进到
 `COMPLETE`。
 
-14 位状态码仍保留在 Task3 内部日志和错误目录中；FSM 主规划器只解析上述 progress
-字符串和 `error` 字段。完整步骤和错误目录见 `TASK3_COMMUNICATION_PROTOCOL.md` 与
-`TASK3_ERROR_CATALOG.md`。
+14 位状态码仍可保留在 Task3 内部日志和错误目录中，但不能出现在发送给 FSM 的 JSON。
+FSM 主规划器只解析 progress 字符串和 error 字段。完整简化表见
+`TASK3_FSM_ENCODING.md`；内部错误目录仍见 `TASK3_ERROR_CATALOG.md`。
 
 ## 4. 正确泊位信息
 
