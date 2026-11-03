@@ -37,7 +37,7 @@
 | 优先级 | 目标 | 允许的最终结论 |
 |---:|---|---|
 | P0 | 完成安全、版本、构建、语义地图 API、LiDAR/TF、定位和人工接管检查 | 可以或不可以继续现场测试 |
-| P1 | 完成 Windows 测试电脑、地面端、移动端、Orin 的网络与通信检查 | 四端链路可用 |
+| P1 | 完成 Ubuntu 测试电脑、地面端、移动端、Orin 的网络与通信检查 | 四端链路可用 |
 | P2 | 完成 LiDAR/TF、入口感知、语义地图和 Task3 dry-run | 对应感知/规划输入可用 |
 | P3 | 在开阔水面完成 0.5 m 和 1.0 m 单点 goto | 单点控制接口可用 |
 | P4 | 分别完成窗口感知、云台、泵、通信 dry-run | 对应单模块可用 |
@@ -91,7 +91,7 @@ P0 或 P1 完成就有有效测试产出。不得为了追求“完整流程”�
 - 水泵无法关闭、继电器粘连、云台失控；
 - Orin 过热、掉电、CPU/内存异常或网络持续中断。
 
-## 4. Windows 测试电脑和终端安排
+## 4. Ubuntu 测试电脑和终端安排
 
 ### 4.1 三种终端标记
 
@@ -100,40 +100,40 @@ P0 或 P1 完成就有有效测试产出。不得为了追求“完整流程”�
 | 标记 | 含义 | 是否可以继续输入其他命令 |
 |---|---|---|
 | **常驻** | 正在运行 launch、节点或持续监视；测试期间必须保持 | 不可以，必须新开终端/tmux 窗口 |
-| **监视** | 正在运行 `ping -t`、`topic echo` 等持续命令 | 不可以；需要时用 `Ctrl+C` 结束 |
+| **监视** | 正在运行持续 `ping`、`topic echo` 等命令 | 不可以；需要时用 `Ctrl+C` 结束 |
 | **一次性** | 命令执行后自动回到提示符 | 可以复用同一个终端 |
 
 看到命令一直不返回提示符并不代表卡死。`ros2 launch`、`ros2 run`、无 `--once` 的
-`ros2 topic echo` 和 Windows 的 `ping -t` 都需要保持运行。不要在这些窗口继续粘贴下一条
+`ros2 topic echo` 和持续 `ping` 都需要保持运行。不要在这些窗口继续粘贴下一条
 命令；应按表中新开窗口。
 
-### 4.2 Windows Terminal 窗口
+### 4.2 Ubuntu 终端窗口
 
-测试电脑使用 Windows。打开 Windows Terminal/PowerShell，至少建立四个标签页：
+测试电脑使用 Ubuntu。打开 GNOME Terminal、Terminator 或其他终端，至少建立四个标签页：
 
 | 编号 | 位置 | 类型 | 用途 | 是否一直开着 |
 |---|---|---|---|---|
-| `W0` | Windows PowerShell | 常驻 | SSH 到 Orin，并进入 tmux | 是 |
-| `W1` | Windows PowerShell | 监视 | 持续 ping Orin `192.168.206.66` | 是，所有水上测试期间 |
-| `W2` | Windows PowerShell | 监视 | 持续 ping 地面端 `192.168.206.200` | 是，所有通信测试期间 |
-| `W3` | Windows PowerShell | 监视 | 持续 ping 移动端 `192.168.206.202` | 是，所有通信测试期间 |
+| `U0` | Ubuntu 终端 | 常驻 | SSH 到 Orin，并进入 tmux | 是 |
+| `U1` | Ubuntu 终端 | 监视 | 持续 ping Orin `192.168.206.66` | 是，所有水上测试期间 |
+| `U2` | Ubuntu 终端 | 监视 | 持续 ping 地面端 `192.168.206.200` | 是，所有通信测试期间 |
+| `U3` | Ubuntu 终端 | 监视 | 持续 ping 移动端 `192.168.206.202` | 是，所有通信测试期间 |
 
-`W1`、`W2`、`W3` 分别执行：
+`U1`、`U2`、`U3` 分别执行：
 
-```powershell
-ping -t 192.168.206.66
-ping -t 192.168.206.200
-ping -t 192.168.206.202
+```bash
+ping 192.168.206.66
+ping 192.168.206.200
+ping 192.168.206.202
 ```
 
-每条命令各占一个 PowerShell 标签页。使用 `Ctrl+C` 才会停止并显示丢包统计。若测试中
+每条命令各占一个 Ubuntu 终端标签页。使用 `Ctrl+C` 才会停止并显示丢包统计。若测试中
 Orin 连续超时 3 次，遥控安全员立即接管；不得等待 SSH 自行恢复。
 
 ### 4.3 Orin 上的 tmux 窗口
 
-在 `W0` 中登录：
+在 `U0` 中登录：
 
-```powershell
+```bash
 ssh robotx@192.168.206.66
 ```
 
@@ -183,7 +183,7 @@ source /home/robotx/robotx_ws/install/setup.bash
 
 | 进入阶段 | 新启动窗口 | 进入下一阶段时继续保留 |
 |---|---|---|
-| B 网络 | `W1`、`W2`、`W3`、`W0/tmux` | 四个都保留 |
+| B 网络 | `U1`、`U2`、`U3`、`U0/tmux` | 四个都保留 |
 | D 无控制检查 | `T0`；`T4` 启动 executor | `T0` 保留；`T4` 按正文决定停止或保留完整 dry-run |
 | E LiDAR | `T2` | `T2` 保留到入口感知结束 |
 | F 定位 | `T1` | 所有运动测试期间保留 |
@@ -215,22 +215,22 @@ source /home/robotx/robotx_ws/install/setup.bash
 
 ## 6. 阶段 B：网络、SSH、版本和资源检查
 
-### 6.1 Windows 测试电脑到三个设备
+### 6.1 Ubuntu 测试电脑到三个设备
 
-在 Windows PowerShell 一次性窗口执行 `ipconfig`，记录测试电脑连接现场网络的 IPv4，记为
+在 Ubuntu 一次性窗口执行 `ip -4 addr`，记录测试电脑连接现场网络的 IPv4，记为
 `TEST_PC_IP`。它应与其他设备处于同一现场网段，且不能与 `.66`、`.200`、`.202` 冲突。
 
 先做 30 包检查：
 
-```powershell
-ipconfig
-ping -n 30 192.168.206.66
-ping -n 30 192.168.206.200
-ping -n 30 192.168.206.202
-Test-NetConnection 192.168.206.66 -Port 22
+```bash
+ip -4 addr
+ping -c 30 192.168.206.66
+ping -c 30 192.168.206.200
+ping -c 30 192.168.206.202
+nc -vz 192.168.206.66 22
 ```
 
-随后按第 4 节启动 `W1`、`W2`、`W3` 三个持续 ping 标签页，再从 `W0` SSH 登录。
+随后按第 4 节启动 `U1`、`U2`、`U3` 三个持续 ping 标签页，再从 `U0` SSH 登录。
 
 通过标准：
 
@@ -241,7 +241,7 @@ Test-NetConnection 192.168.206.66 -Port 22
 
 ### 6.2 Orin 反向检查测试电脑、地面端和移动端
 
-在 Orin `T8` 执行，把第一条中的地址替换为刚才记录的 Windows IPv4：
+在 Orin `T8` 执行，把第一条中的地址替换为刚才记录的 Ubuntu IPv4：
 
 ```bash
 ping -c 30 TEST_PC_IP
@@ -249,12 +249,16 @@ ping -c 30 192.168.206.200
 ping -c 30 192.168.206.202
 ```
 
-如果 Windows 能 ping Orin，但 Orin 不能 ping Windows，先检查 Windows 当前网络是否被识别
-成“公用网络”和 Windows Defender 的 ICMPv4 Echo 入站规则。只放行现场网卡所需规则，
-不要关闭整个防火墙。
+如果 Ubuntu 能 ping Orin，但 Orin 不能 ping Ubuntu，先检查 Ubuntu 防火墙和现场网卡规则：
+
+```bash
+sudo ufw status
+```
+
+只允许现场网络所需的 ICMP/SSH 通信，不要直接关闭整个防火墙。
 
 若地面端或移动端有终端，再分别从它们 ping `192.168.206.66` 和 `TEST_PC_IP`，完成全双向
-检查；若没有命令终端，至少确认 Windows、Orin 都能 ping 它们，并在第 15 节用 heartbeat/
+检查；若没有命令终端，至少确认 Ubuntu、Orin 都能 ping 它们，并在第 15 节用 heartbeat/
 ACK 验证应用层的双向通信。单向 ping 成功不能代替应用层 ACK。
 
 ### 6.3 Orin 版本和资源
@@ -656,7 +660,7 @@ ros2 topic info /tongji_mrl/tsky/heartbeat --verbose
 
 验证内容：
 
-- `W1`、`W2`、`W3` 没有连续超时；
+- `U1`、`U2`、`U3` 没有连续超时；
 - 地面端 `192.168.206.200` 和移动端 `192.168.206.202` 的实际应用均在线；
 - `begin` 只转发一次，重复命令不会重复执行；
 - `end` 转成 SAFE_STOP/ACK，不会被误报为 TASK3_FINISH；
@@ -688,9 +692,9 @@ ros2 topic info /tongji_mrl/tsky/heartbeat --verbose
 
 | 错误/现象 | 最可能原因 | 处理 |
 |---|---|---|
-| PowerShell 提示找不到 `ssh` | Windows OpenSSH Client 未启用 | 在 Windows“可选功能”启用 OpenSSH Client，或使用已配置的 VS Code Remote SSH；不要临时关闭安全设置 |
+| Ubuntu 提示找不到 `ssh` | OpenSSH Client 未安装 | 安装发行版提供的 OpenSSH Client，或使用已配置的 VS Code Remote SSH；不要临时关闭安全设置 |
 | SSH 连接失败 | 不同网段、Wi-Fi/路由器、Orin 未上电 | ping `192.168.206.66`，检查本机 IP 和网线；不要反复重启整船 |
-| Windows 能 ping Orin，Orin 不能 ping Windows | Windows 防火墙/公用网络规则 | 只放行现场网卡 ICMPv4 Echo；不要关闭整个防火墙 |
+| Ubuntu 能 ping Orin，Orin 不能 ping Ubuntu | Ubuntu 防火墙/现场网卡规则 | 只放行现场网卡 ICMPv4 Echo；不要关闭整个防火墙 |
 | 地面端或移动端连续丢包 | 现场 AP 覆盖、设备休眠或 IP 冲突 | 暂停通信/运动测试，靠近 AP、关闭省电并检查静态 IP |
 | ping 正常但没有 ACK/heartbeat | 应用未启动、端口/DDS/domain 不一致 | 检查应用进程、ROS domain、topic/type；不能按通信成功处理 |
 | `ros2` 找不到包 | source 了错误工作区 | 新终端只 source ROS Humble 和正式 `install/setup.bash` |
@@ -729,7 +733,7 @@ ros2 topic info /tongji_mrl/tsky/heartbeat --verbose
    `T9` 停入口感知、`T3` 停语义地图；每个窗口使用一次 `Ctrl+C` 并等待进程正常退出；
 5. 船体已经由人工控制稳定后，再在 `T2` 停 LiDAR、`T1` 停 MAVROS/共享位置、`T0` 停监视；
 6. 保存 topic/service 列表、TF、版本、参数、终端截图、照片和视频；
-7. 在 `W1`、`W2`、`W3` 分别按 `Ctrl+C`，截图保存三个地址的最终丢包统计；
+7. 在 `U1`、`U2`、`U3` 分别按 `Ctrl+C`，保存三个地址的最终丢包统计；
 8. 船上岸后再关闭飞控和 Orin；
 9. 不删除失败日志，失败信息对定位接口问题最有价值。
 
@@ -738,7 +742,7 @@ ros2 topic info /tongji_mrl/tsky/heartbeat --verbose
 | 项目 | 结果/数值 |
 |---|---|
 | 测试日期、地点、人员 |  |
-| Windows 测试电脑 IPv4 |  |
+| Ubuntu 测试电脑 IPv4 |  |
 | Orin `.66` 丢包/延迟 |  |
 | 地面端 `.200` 丢包/延迟、ACK |  |
 | 移动端 `.202` 丢包/延迟、heartbeat |  |
