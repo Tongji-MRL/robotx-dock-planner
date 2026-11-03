@@ -3,6 +3,7 @@ import time
 import unittest
 
 import rclpy
+from nav_msgs.msg import Odometry
 from std_msgs.msg import Empty, String
 
 from dock_planner import Task3FlowState
@@ -92,6 +93,37 @@ class Task3ExecutorNodeTests(unittest.TestCase):
             "frame_id": "uav_ned",
         }))
         self.assertEqual(self.node.flow_manager.state, Task3FlowState.IDLE)
+
+    def test_goto_preview_uses_odom_reference_but_dry_run_does_not_enable_motion(self):
+        now = time.time()
+        odom = Odometry()
+        odom.header.stamp.sec = int(now)
+        odom.header.stamp.nanosec = int((now - int(now)) * 1e9)
+        odom.pose.pose.position.x = 100.0
+        odom.pose.pose.position.y = 200.0
+        self.node._on_odom(odom)
+        self.node._on_ned_position(self.message({
+            "valid": True,
+            "position_ned_m": {"north": 0.0, "east": 0.0, "down": 0.0},
+            "heading_rad": 0.0,
+            "stamp_unix_sec": now,
+            "sequence": 1,
+            "frame_id": "test_ned",
+        }))
+        self.node._on_coarse_dock(self.message({
+            "dock_id": "dock_0",
+            "center_ned": {"north": 20.0, "east": 0.0, "down": 0.0},
+            "timestamp": now,
+            "valid": True,
+            "source": "semantic_map_mock",
+            "mock": True,
+            "frame_id": "test_ned",
+        }))
+        self.assertIsNotNone(self.node.last_goto_target)
+        self.assertEqual(self.node.last_goto_target["phase"], "APPROACH_DOCK")
+        self.assertAlmostEqual(self.node.last_goto_target["east_m"], 100.0)
+        self.assertNotAlmostEqual(self.node.last_goto_target["north_m"], 200.0)
+        self.assertFalse(self.node.enable_goto_output)
 
 
 if __name__ == "__main__":
