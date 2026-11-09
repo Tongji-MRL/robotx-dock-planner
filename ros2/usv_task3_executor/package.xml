@@ -11,6 +11,11 @@
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
   <exec_depend>robotx_msgs</exec_depend>
+  <exec_depend>robotx_semantic_map</exec_depend>
+  <exec_depend>robotx_usv_perception</exec_depend>
+  <exec_depend>robotx_gimbal_interfaces</exec_depend>
+  <exec_depend>depthai_ros_driver</exec_depend>
+  <exec_depend>launch</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <export><build_type>ament_python</build_type></export>

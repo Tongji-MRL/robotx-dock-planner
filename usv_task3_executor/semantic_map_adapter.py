@@ -4,6 +4,8 @@ import json
 import math
 from typing import Any
 
+from dock_planner.task3_ros_contract import COMMON_RTK_NED_FRAME
+
 
 def _finite_number(value: Any, field_name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -21,7 +23,7 @@ def parse_semantic_map_dock(
     data: str,
     dock_id: int,
     timestamp: float,
-    frame_id: str = "mock_ned",
+    frame_id: str = COMMON_RTK_NED_FRAME,
 ) -> dict[str, Any]:
     """Return one selected dock as an explicitly marked center-only mock."""
 
@@ -92,7 +94,7 @@ def main(args=None) -> None:
             super().__init__("task3_semantic_map_mock_adapter")
             self.declare_parameter("dock_id", 0)
             self.declare_parameter("dry_run", True)
-            self.declare_parameter("frame_id", "mock_ned")
+            self.declare_parameter("frame_id", COMMON_RTK_NED_FRAME)
             self.dock_id = self.get_parameter("dock_id").value
             self.dry_run = self.get_parameter("dry_run").value
             self.frame_id = str(self.get_parameter("frame_id").value)

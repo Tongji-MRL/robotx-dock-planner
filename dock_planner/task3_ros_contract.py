@@ -20,6 +20,10 @@ from .fsm_contract import validate_fsm_progress
 
 PROTOCOL_VERSION = "task3-ros-v1"
 VEHICLE_PROTOCOL_VERSION = "1"
+# Shared local NED established from the fixed competition RTK reference.  UAV
+# map objects and the USV pose may be combined only when both explicitly carry
+# this same frame identifier.
+COMMON_RTK_NED_FRAME = "robotx_rtk_ned"
 
 TASK_COMMAND_TOPIC = "/tongji_mrl/twave/task_cmd"
 TASK_ACK_TOPIC = "/tongji_mrl/twave/task_ack"
@@ -41,6 +45,12 @@ SUPPORTED_COMMANDS = {
     "SAFE_STOP",
     "RESET",
 }
+
+# RoboNation's Task 3 dock drawing defines these competition IDs. ``dock_id``
+# remains the identifier of the whole dock/map object and must not be confused
+# with the numbered bay selected inside that dock.
+OFFICIAL_BAY_IDS = (1, 2, 3)
+OFFICIAL_WINDOW_IDS = (1, 2)
 
 _FLOW_TO_STEP = {
     "IDLE": Task3Step.READY,
@@ -77,6 +87,65 @@ def _nonempty(value: Any, name: str) -> str:
     return value.strip()
 
 
+def official_bay_id_from_left_index(left_index: int) -> int:
+    """Map a bay's zero-based left-to-right order to the official bay ID."""
+
+    if isinstance(left_index, bool) or not isinstance(left_index, int):
+        raise ValueError("left_index must be an integer")
+    if not 0 <= left_index < len(OFFICIAL_BAY_IDS):
+        raise ValueError("bay left_index must be 0, 1, or 2")
+    return OFFICIAL_BAY_IDS[left_index]
+
+
+def official_window_id_from_side(side: str) -> int:
+    """Map window side to its official ID while facing the dock from the water."""
+
+    if not isinstance(side, str):
+        raise ValueError("window side must be LEFT or RIGHT")
+    normalized = side.strip().upper()
+    try:
+        return {"LEFT": 1, "RIGHT": 2}[normalized]
+    except KeyError as exc:
+        raise ValueError("window side must be LEFT or RIGHT") from exc
+
+
+@dataclass
+class BestEffortWindowId:
+    """Keep the latest usable LEFT/RIGHT evidence and always yield a report ID.
+
+    Window numbering is useful for the post-delivery FirefightingReport, but it
+    must not block aiming, spraying, or the GREEN completion decision.  When no
+    side evidence was available during the attempt, ``fallback_id`` supplies a
+    deterministic guess so the report can still be sent.
+    """
+
+    fallback_id: int = 1
+    observed_id: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.fallback_id not in OFFICIAL_WINDOW_IDS:
+            raise ValueError("fallback_id must be 1 (left) or 2 (right)")
+
+    def observe_side(self, side: object) -> int | None:
+        if not isinstance(side, str):
+            return self.observed_id
+        normalized = side.strip().upper()
+        if normalized in {"LEFT", "RIGHT"}:
+            self.observed_id = official_window_id_from_side(normalized)
+        return self.observed_id
+
+    @property
+    def report_id(self) -> int:
+        return self.observed_id or self.fallback_id
+
+    @property
+    def used_fallback(self) -> bool:
+        return self.observed_id is None
+
+    def reset(self) -> None:
+        self.observed_id = None
+
+
 def decode_json_object(raw: str) -> dict[str, Any]:
     try:
         value = json.loads(raw)
@@ -107,7 +176,7 @@ class CorrectBayInfo:
         if not isinstance(value, Mapping):
             raise TypeError("correct bay input must be a mapping")
         bay_id = _positive_int(value.get("bay_id"), "bay_id")
-        if bay_id > 3:
+        if bay_id not in OFFICIAL_BAY_IDS:
             raise ValueError("bay_id must be between 1 and 3")
         confidence = _finite(value.get("confidence"), "confidence")
         if not 0.0 <= confidence <= 1.0:
@@ -160,8 +229,11 @@ class SprayerWindowInfo:
         )
         if duration < 0:
             raise ValueError("green_confirmed_duration_s must be non-negative")
+        window_id = _positive_int(value.get("window_id"), "window_id")
+        if window_id not in OFFICIAL_WINDOW_IDS:
+            raise ValueError("window_id must be 1 (left) or 2 (right)")
         return cls(
-            window_id=_positive_int(value.get("window_id"), "window_id"),
+            window_id=window_id,
             color=color,
             confidence=confidence,
             observed_at_unix_ms=_positive_int(
@@ -181,6 +253,56 @@ class SprayerWindowInfo:
             and self.pump_off
             and self.green_confirmed_duration_s >= 5.0
         )
+
+
+@dataclass
+class Task3TargetIdGate:
+    """Latch one bay/window pair and block mixed or out-of-order reports.
+
+    The child Task 3 flow feeds already-confirmed perception decisions into
+    this gate. A window cannot be accepted before a bay, and either ID cannot
+    silently change during the same Task 3 run. Call :meth:`reset` when a new
+    run starts or the mission planner issues RESET.
+    """
+
+    dock_id: str | None = None
+    bay_id: int | None = None
+    window_id: int | None = None
+
+    def accept_bay(self, info: CorrectBayInfo) -> None:
+        if not isinstance(info, CorrectBayInfo):
+            raise TypeError("info must be CorrectBayInfo")
+        if self.bay_id is not None and (
+            self.bay_id != info.bay_id or self.dock_id != info.dock_id
+        ):
+            raise ValueError(
+                "bay selection is already locked for this Task3 run; reset before changing it"
+            )
+        self.dock_id = info.dock_id
+        self.bay_id = info.bay_id
+
+    def accept_window(self, info: SprayerWindowInfo) -> None:
+        if not isinstance(info, SprayerWindowInfo):
+            raise TypeError("info must be SprayerWindowInfo")
+        if self.bay_id is None or self.dock_id is None:
+            raise ValueError("window_id cannot be accepted before bay_id is confirmed")
+        if self.window_id is not None and self.window_id != info.window_id:
+            raise ValueError(
+                "window selection is already locked for this Task3 run; reset before changing it"
+            )
+        self.window_id = info.window_id
+
+    def context(self) -> dict[str, Any]:
+        return {
+            "dock_id": self.dock_id,
+            "bay_id": self.bay_id,
+            "window_id": self.window_id,
+        }
+
+    def reset(self) -> None:
+        self.dock_id = None
+        self.bay_id = None
+        self.window_id = None
 
 
 class Task3RosMessageFactory:
@@ -490,8 +612,12 @@ class HeartbeatMonitor:
 
 
 __all__ = [
+    "BestEffortWindowId",
+    "COMMON_RTK_NED_FRAME",
     "CorrectBayInfo",
     "HeartbeatMonitor",
+    "OFFICIAL_BAY_IDS",
+    "OFFICIAL_WINDOW_IDS",
     "PROTOCOL_VERSION",
     "SprayerWindowInfo",
     "TASK3_CONTROL_COMMAND_TOPIC",
@@ -504,10 +630,13 @@ __all__ = [
     "TASK_PROGRESS_TOPIC",
     "TASK_REPORT_TOPIC",
     "Task3RosMessageFactory",
+    "Task3TargetIdGate",
     "UAV_HEARTBEAT_TOPIC",
     "USV_HEARTBEAT_TOPIC",
     "decode_json_object",
     "encode_json_object",
     "normalize_task_command",
+    "official_bay_id_from_left_index",
+    "official_window_id_from_side",
     "validate_vehicle_heartbeat",
 ]

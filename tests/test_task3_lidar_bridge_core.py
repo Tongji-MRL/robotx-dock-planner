@@ -10,6 +10,8 @@ from robotx_perception_common.task3_lidar_bridge_core import (
     parse_coarse_center_json,
     parse_usv_pose_json,
     transform_base_link_points_to_ned,
+    transform_base_link_yaw_to_ned_heading,
+    transform_ned_point_to_base_link,
 )
 from dock_planner.integration import (
     DockEntranceObservationNED,
@@ -30,6 +32,17 @@ class Task3LidarBridgeCoreTests(unittest.TestCase):
                 "position_ned_m": {"north": 1, "east": 2, "down": 0},
                 "stamp_unix_sec": 3,
             })
+
+    def test_ned_point_to_base_link_is_the_horizontal_inverse(self):
+        pose = USVPoseNED(10.0, 20.0, 0.0, math.pi / 2.0, 100.0)
+        x_m, y_m = transform_ned_point_to_base_link(10.0, 24.0, pose)
+        self.assertAlmostEqual(x_m, 4.0)
+        self.assertAlmostEqual(y_m, 0.0)
+
+    def test_local_left_yaw_reduces_clockwise_ned_heading(self):
+        pose = USVPoseNED(0.0, 0.0, 0.0, math.pi / 2.0, 100.0)
+        heading = transform_base_link_yaw_to_ned_heading(math.pi / 2.0, pose)
+        self.assertAlmostEqual(heading, 0.0)
 
     def test_contract_round_trip_shape(self):
         coarse = parse_coarse_center_json({

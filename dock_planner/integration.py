@@ -356,6 +356,55 @@ class DockEntranceObservationNED:
         return self.valid and is_timestamp_fresh(self.timestamp, now, timeout_s)
 
 
+def sort_entrances_left_to_right(
+    observations: Sequence[DockEntranceObservationNED],
+) -> Tuple[DockEntranceObservationNED, ...]:
+    """Order entrances left-to-right while facing inward from the water.
+
+    Candidate confidence and detector discovery order are unsuitable for the
+    official bay numbering. Entrance headings point into the dock, so their
+    aligned mean defines the forward axis and its right-hand perpendicular
+    defines the ordering axis in NED.
+    """
+
+    values = tuple(observations)
+    if not all(isinstance(item, DockEntranceObservationNED) for item in values):
+        raise TypeError("observations must contain DockEntranceObservationNED values")
+    if len(values) < 2:
+        return values
+
+    reference_north = math.cos(values[0].entrance_heading_rad)
+    reference_east = math.sin(values[0].entrance_heading_rad)
+    heading_north = 0.0
+    heading_east = 0.0
+    for item in values:
+        north = math.cos(item.entrance_heading_rad)
+        east = math.sin(item.entrance_heading_rad)
+        if north * reference_north + east * reference_east < 0.0:
+            north = -north
+            east = -east
+        heading_north += north
+        heading_east += east
+    norm = math.hypot(heading_north, heading_east)
+    if norm <= 1e-9:
+        heading_north, heading_east = reference_north, reference_east
+    else:
+        heading_north /= norm
+        heading_east /= norm
+
+    # For an inward heading (north, east), the viewer's right direction is
+    # (-east, north). Ascending projection is therefore left-to-right.
+    right_north = -heading_east
+    right_east = heading_north
+    return tuple(sorted(
+        values,
+        key=lambda item: (
+            item.entrance_center_north_m * right_north
+            + item.entrance_center_east_m * right_east
+        ),
+    ))
+
+
 @dataclass(frozen=True)
 class BayColorObservation:
     """Color model output consumed from the perception group."""

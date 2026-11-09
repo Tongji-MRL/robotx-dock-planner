@@ -1,13 +1,13 @@
 # DockPlanner V0 工作进度与续接说明
 
-更新时间：2026-10-05（Asia/Shanghai）
+更新时间：2026-11-09（Asia/Shanghai）
 
 本文档用于在新的 Codex thread 中无损继续 RobotX 2026 Task 3 靠泊规划工作。当前已完成 Phase 1 / 1.5 / 2 / 3 分段验证，并完成官方原始 300 s lifecycle 内的 `start -> approach -> ALIGN -> entrance -> stop -> docked` 连续动态验证；读取本文档后不应自动运行 Gazebo 或发送推力。
 
 Task 3 后续真实执行流程已经确定为：
 
 ```text
-UAV 粗中心（转换到 USV NED）
+UAV 粗中心（共享 robotx_rtk_ned）
   -> USV 到安全圆近侧 staging 点
   -> 沿有限圆弧逐点搜索，同时由 Mid-360 LiDAR 做 dock local search
   -> 入口姿态调整

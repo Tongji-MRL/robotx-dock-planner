@@ -41,7 +41,7 @@ class LidarExtrinsics:
     """
 
     x_m: float = 0.15
-    y_m: float = 0.0
+    y_m: float = 0.10
     z_m: float = 0.22
     roll_rad: float = 0.0
     pitch_rad: float = 0.0

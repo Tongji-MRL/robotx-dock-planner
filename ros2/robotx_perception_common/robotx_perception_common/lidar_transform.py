@@ -23,6 +23,7 @@ from typing import Sequence
 import numpy as np
 
 from .pointcloud_adapter import pointcloud2_message_to_xyz
+from .custommsg_adapter import custom_msg_to_xyz
 
 
 def _finite_float(name: str, value: float) -> float:
@@ -41,7 +42,7 @@ class LidarExtrinsics:
     """
 
     x_m: float = 0.15
-    y_m: float = 0.0
+    y_m: float = 0.10
     z_m: float = 0.22
     roll_rad: float = 0.0
     pitch_rad: float = 0.0
@@ -140,6 +141,16 @@ def pointcloud_message_to_base_link_xyz(
     return transform_lidar_points_to_base_link(lidar_points, extrinsics)
 
 
+def custom_msg_to_base_link_xyz(
+    message: object,
+    extrinsics: LidarExtrinsics | None = None,
+) -> np.ndarray:
+    """Extract Livox ``CustomMsg`` points and transform them to ``base_link``."""
+
+    lidar_points = custom_msg_to_xyz(message)
+    return transform_lidar_points_to_base_link(lidar_points, extrinsics)
+
+
 def transform_base_link_points_to_lidar(
     points_xyz: Sequence[Sequence[float]],
     extrinsics: LidarExtrinsics | None = None,
@@ -158,5 +169,6 @@ __all__ = [
     "transform_lidar_points_to_base_link",
     "transform_lidar_point_to_base_link",
     "pointcloud_message_to_base_link_xyz",
+    "custom_msg_to_base_link_xyz",
     "transform_base_link_points_to_lidar",
 ]

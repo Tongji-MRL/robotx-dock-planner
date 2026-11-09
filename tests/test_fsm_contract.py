@@ -121,6 +121,8 @@ class FsmContractTests(unittest.TestCase):
         self.assertEqual(result["official_report"]["type"], "docking")
         window = sprayer_window_to_fsm_progress({
             "window_id": 1,
+            "bay_id": 2,
+            "dock_id": "dock-A",
             "color": "GREEN",
             "confidence": 0.9,
             "pump_off": True,
@@ -128,6 +130,8 @@ class FsmContractTests(unittest.TestCase):
             "completion_confirmed": True,
         })
         self.assertEqual(window["progress"], "TASK3_SPRAYER_WINDOW")
+        self.assertEqual(window["bay_id"], 2)
+        self.assertEqual(window["dock_id"], "dock-A")
         self.assertTrue(window["completion_confirmed"])
 
 

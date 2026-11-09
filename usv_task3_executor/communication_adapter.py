@@ -20,6 +20,7 @@ from dock_planner.task3_ros_contract import (
     CorrectBayInfo,
     HeartbeatMonitor,
     SprayerWindowInfo,
+    Task3TargetIdGate,
     UAV_HEARTBEAT_TOPIC,
     USV_HEARTBEAT_TOPIC,
     decode_json_object,
@@ -74,6 +75,7 @@ class Task3CommunicationAdapter(Node):
         self._processed_command_ids: set[str] = set()
         self._published_report_keys: set[tuple[Any, ...]] = set()
         self._last_executor_state: dict[str, Any] | None = None
+        self._target_ids = Task3TargetIdGate()
 
         self.progress_pub = self.create_publisher(String, FSM_PROGRESS_TOPIC, 10)
         self.result_pub = self.create_publisher(String, FSM_RESULT_TOPIC, 10)
@@ -132,6 +134,7 @@ class Task3CommunicationAdapter(Node):
         try:
             value = decode_json_object(msg.data)
             info = CorrectBayInfo.from_mapping(value)
+            self._target_ids.accept_bay(info)
         except (TypeError, ValueError) as exc:
             self.get_logger().warning(f"Ignoring invalid correct-bay input: {exc}")
             return
@@ -155,11 +158,14 @@ class Task3CommunicationAdapter(Node):
         try:
             value = decode_json_object(msg.data)
             info = SprayerWindowInfo.from_mapping(value)
+            self._target_ids.accept_window(info)
         except (TypeError, ValueError) as exc:
             self.get_logger().warning(f"Ignoring invalid sprayer-window input: {exc}")
             return
         raw_info = {
             "window_id": info.window_id,
+            "bay_id": self._target_ids.bay_id,
+            "dock_id": self._target_ids.dock_id,
             "color": info.color,
             "confidence": info.confidence,
             "pump_off": info.pump_off,
@@ -190,6 +196,8 @@ class Task3CommunicationAdapter(Node):
         duplicate = command["command_id"] in self._processed_command_ids
         if not duplicate:
             self._processed_command_ids.add(command["command_id"])
+            if command["command"] in {"START_TASK3", "RESET"}:
+                self._target_ids.reset()
             if command["command"] == "TASK4_GOTO":
                 self._publish_checkpoint_before_task4()
             self._publish(self.control_command_pub, command)

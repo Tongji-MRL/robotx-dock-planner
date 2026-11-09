@@ -17,6 +17,7 @@ from .integration import (
     dock_vision_to_bay_color_observation,
     entrance_observation_to_precise_pose, is_timestamp_fresh,
     parse_dock_vision_json, parse_logistics_request_json, prepare_terminal_plan_input,
+    sort_entrances_left_to_right,
 )
 from .ros_twist_adapter import DEFAULT_RATE_HZ, DEFAULT_TOPIC, RosTwistAdapter, to_twist_message
 from .task3_flow import Task3FlowManager, Task3FlowState, Task3RetryConfig
@@ -90,8 +91,11 @@ from .task3_subfsm_bridge import (
     Task3Checkpoint, Task3SubFSMBridge,
 )
 from .task3_ros_contract import (
-    CorrectBayInfo, HeartbeatMonitor, SprayerWindowInfo,
+    COMMON_RTK_NED_FRAME, CorrectBayInfo, HeartbeatMonitor,
+    OFFICIAL_BAY_IDS, OFFICIAL_WINDOW_IDS,
+    SprayerWindowInfo, Task3TargetIdGate,
     Task3RosMessageFactory, normalize_task_command,
+    BestEffortWindowId, official_bay_id_from_left_index, official_window_id_from_side,
     validate_vehicle_heartbeat,
 )
 from .fsm_contract import (
@@ -123,6 +127,7 @@ __all__ = [
     "dock_vision_to_bay_color_observation",
     "DataFreshnessConfig", "DockPerceptionResult", "is_timestamp_fresh",
     "TerminalPlanInput", "prepare_terminal_plan_input", "entrance_observation_to_precise_pose",
+    "sort_entrances_left_to_right",
     "GlobalApproachPlanner",
     "GlobalApproachResult", "GlobalApproachStatus", "DEFAULT_TOPIC", "DEFAULT_RATE_HZ",
     "RosTwistAdapter", "to_twist_message",
@@ -169,8 +174,11 @@ __all__ = [
     "TaskStatusCode", "VehicleCode",
     "MasterCommand", "MasterCommandType", "ResumePolicy", "SubFSMReport",
     "Task3Checkpoint", "Task3SubFSMBridge",
-    "CorrectBayInfo", "HeartbeatMonitor", "SprayerWindowInfo",
+    "COMMON_RTK_NED_FRAME", "CorrectBayInfo", "HeartbeatMonitor",
+    "OFFICIAL_BAY_IDS", "OFFICIAL_WINDOW_IDS",
+    "SprayerWindowInfo", "Task3TargetIdGate",
     "Task3RosMessageFactory", "normalize_task_command",
+    "BestEffortWindowId", "official_bay_id_from_left_index", "official_window_id_from_side",
     "validate_vehicle_heartbeat",
     "FSM_TASK3_FINISH_PROGRESS", "FSM_PROGRESS_REQUIRED_FIELDS", "TASK3_WIRE_PROGRESS",
     "normalize_fsm_task_command", "executor_state_to_fsm_progress",

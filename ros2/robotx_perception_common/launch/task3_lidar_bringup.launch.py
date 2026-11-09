@@ -50,7 +50,7 @@ def generate_launch_description():
             description="Start the Livox Mid-360 driver in this launch.",
         ),
         DeclareLaunchArgument("lidar_x", default_value="0.15"),
-        DeclareLaunchArgument("lidar_y", default_value="0.0"),
+        DeclareLaunchArgument("lidar_y", default_value="0.10"),
         DeclareLaunchArgument("lidar_z", default_value="0.22"),
         DeclareLaunchArgument("lidar_roll", default_value="0.0"),
         DeclareLaunchArgument("lidar_pitch", default_value="0.0"),

@@ -262,6 +262,8 @@ def sprayer_window_to_fsm_progress(info: Mapping[str, Any]) -> dict[str, Any]:
         progress="TASK3_SPRAYER_WINDOW",
         error=None,
         window_id=info["window_id"],
+        bay_id=info.get("bay_id"),
+        dock_id=info.get("dock_id"),
         color=info["color"],
         confidence=info["confidence"],
         pump_off=info["pump_off"],
@@ -277,6 +279,8 @@ def firefighting_result_to_fsm_message(info: Mapping[str, Any]) -> dict[str, Any
         error=None,
         phase="FIREFIGHTING_COMPLETE",
         authority="USV",
+        bay_id=info.get("bay_id"),
+        dock_id=info.get("dock_id"),
         official_report={
             "type": "firefighting",
             "vehicle_id": "T-Wave",

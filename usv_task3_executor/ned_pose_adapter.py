@@ -132,6 +132,7 @@ def main(args=None) -> None:
     import rclpy
     from nav_msgs.msg import Odometry
     from rclpy.node import Node
+    from rclpy.qos import qos_profile_sensor_data
     from std_msgs.msg import String
 
     class Task3NEDPoseAdapter(Node):
@@ -150,7 +151,7 @@ def main(args=None) -> None:
                 Odometry,
                 str(self.get_parameter("input_topic").value),
                 self._on_odometry,
-                10,
+                qos_profile_sensor_data,
             )
             self.get_logger().info(
                 "Task3 NED pose adapter ready; MAVROS ENU odometry will be "

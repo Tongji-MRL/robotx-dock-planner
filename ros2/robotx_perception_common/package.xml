@@ -2,7 +2,7 @@
 <package format="3">
   <name>robotx_perception_common</name>
   <version>0.1.0</version>
-  <description>Shared Mid-360 PointCloud2 parsing, base_link conversion, and bringup.</description>
+  <description>Shared Mid-360 PointCloud2/CustomMsg parsing, base_link conversion, and bringup.</description>
   <maintainer email="robotx@todo.invalid">RobotX team</maintainer>
   <license>Apache-2.0</license>
 

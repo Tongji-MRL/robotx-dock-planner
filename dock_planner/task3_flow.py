@@ -26,6 +26,7 @@ from .integration import (
     classify_coarse_dock_circle_position,
     entrance_observation_to_precise_pose,
     prepare_terminal_plan_input,
+    sort_entrances_left_to_right,
 )
 from .dock_search import (
     CircularDockSearchConfig,
@@ -369,7 +370,7 @@ class Task3FlowManager:
         *,
         now: Optional[float] = None,
     ) -> bool:
-        """Select the first valid fresh entrance candidate from an update.
+        """Inspect valid entrances from dock-left to dock-right.
 
         A valid result with no usable candidates leaves the manager in
         ``SEARCH_DOCK`` so the caller can continue local search.  A stale or
@@ -400,7 +401,7 @@ class Task3FlowManager:
             self._retry_or_fail("dock_perception", "no usable entrance candidate", now=now)
             return False
         self._clear_retry("dock_perception")
-        for candidate in candidates:
+        for candidate in sort_entrances_left_to_right(candidates):
             self.accept_entrance_observation(candidate, current_pose, now=now)
             if self._state is Task3FlowState.CHECK_BAY_COLOR:
                 return True

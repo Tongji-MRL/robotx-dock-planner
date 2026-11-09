@@ -19,7 +19,7 @@ setup(
     zip_safe=True,
     maintainer="RobotX team",
     maintainer_email="robotx@todo.invalid",
-    description="Shared Mid-360 PointCloud2 parsing and base_link conversion",
+    description="Shared Mid-360 PointCloud2/CustomMsg parsing and base_link conversion",
     license="Apache-2.0",
     entry_points={
         "console_scripts": [

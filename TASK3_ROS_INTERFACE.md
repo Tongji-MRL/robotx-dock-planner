@@ -53,6 +53,14 @@
 adapter 只订阅和监测 heartbeat，不伪造 GPS、姿态或车辆模式。两台车辆各自负责发布真实
 heartbeat。默认超过 3 秒未收到视为失联；启动后默认有 5 秒宽限期。
 
+### 2.1 正式坐标系
+
+Task3 正式导航数据统一使用固定 RTK 参考点建立的 `robotx_rtk_ned`。UAV 语义地图、
+UAV 位姿和 `/tongji_mrl/twave/ned_position` 中的 USV 位姿必须携带完全相同的 frame ID；
+Task3 只做一致性检查，不再执行 UAV 局部原点到 USV 局部原点的转换。MAVROS
+`local_position/odom` 转换得到的 `usv_fcu_local_ned` 仅用于独立测试，不能通过改标签
+冒充共享 RTK 坐标。
+
 ## 3. Progress
 
 现有 `/tongji_mrl/twave/task3/state` 会映射为 FSM 可直接判断的 progress。例如：
@@ -124,7 +132,9 @@ Task3 流程在确认正确 bay 后发布，并在最终靠泊确认后以同一
 
 约束：
 
+- 比赛图中面对 Dock 正面时，三个 bay 从左到右依次为 `bay_id=1,2,3`；
 - `bay_id` 只能为 1、2、3；
+- `dock_id` 是整个 Dock/语义地图对象的内部标识，不等于比赛要求上报的 `bay_id`；
 - `confidence` 为 `[0,1]`；
 - `docking_confirmed=false` 时只生成 `TASK3_CORRECT_BAY` progress，让总规划器及时获得
   `dock_id/bay_id/confidence`；
@@ -147,6 +157,9 @@ Task3 流程在确认正确 bay 后发布，并在最终靠泊确认后以同一
 ```
 
 ## 5. 喷水窗口信息
+
+面对 Dock 正面时，每个 bay 内左侧窗口为 `window_id=1`，右侧窗口为
+`window_id=2`。窗口 ID 只有这两个合法值。
 
 窗口状态输入：
 
@@ -188,6 +201,31 @@ Task3 流程在确认正确 bay 后发布，并在最终靠泊确认后以同一
 ```
 
 RED、未停泵、绿色不足 5 秒或未得到流程控制器确认时只上报 progress。
+
+### 5.1 ID 判定与锁定
+
+Task3 子状态机必须按以下顺序生成事件：
+
+1. 绿色指示灯识别稳定后确定 `bay_id`，发布 `correct_bay`；
+2. 进入该 bay 后跟踪亮起窗口；能判断左右时分别记录 `window_id=1/2`；
+3. adapter 将 `dock_id + bay_id + window_id` 作为同一次 Task3 的目标上下文保存；
+4. 未确认 bay 的窗口消息和范围外 ID 均被拒绝；
+5. 新的 `START_TASK3` 或 `RESET` 命令会清空锁定，允许下一次任务重新识别。
+
+`TASK3_SPRAYER_WINDOW` 会附带已锁定的 `dock_id` 和 `bay_id`，便于总状态机确认
+窗口属于本次已选择的 bay。正式 docking report 上报 `bay_id`；正式 firefighting
+report 上报 `window_id`，两者分别对应比赛要求的两个报告阶段。
+
+入口候选不能按点云检测先后或置信度直接编号。规划流程将同一批入口按“船从水面
+正对 Dock 时的左到右”排序后依次检查；完整识别出三个入口时，该顺序才对应
+`bay_id=1,2,3`。若当帧只有部分入口，需结合已建立的 Dock 横向坐标轴和历史入口
+位置完成关联，不能把第一个被发现的入口直接叫作 bay 1。
+
+`window_id` 是喷水成功后的尽力报告字段，不是瞄准、开泵或绿灯完成判定的前置条件。
+相机能判断目标相对当前 bay 正面的左右位置时，左侧为 1、右侧为 2，并保存到本次喷水
+上下文。云台 yaw 会随船姿态、零位和跟踪过程变化，不能作为窗口编号依据。若整个喷水
+过程中始终只能看到单窗且缺少 bay 中心证据，完成后使用启动参数
+`fallback_window_id`（默认 1）发送合法 ID；不得因 ID 不确定延迟喷水或否定绿灯成功。
 
 ## 6. Heartbeat
 

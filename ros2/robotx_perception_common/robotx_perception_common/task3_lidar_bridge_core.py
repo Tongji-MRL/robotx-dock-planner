@@ -145,6 +145,33 @@ def transform_base_link_points_to_ned(
     return np.ascontiguousarray(result)
 
 
+def transform_ned_point_to_base_link(
+    north_m: float,
+    east_m: float,
+    pose: USVPoseNED,
+) -> tuple[float, float]:
+    """Express one horizontal NED point in ``base_link`` FLU coordinates."""
+
+    delta_n = _finite_number(north_m, "north_m") - pose.north_m
+    delta_e = _finite_number(east_m, "east_m") - pose.east_m
+    c = math.cos(pose.heading_rad)
+    s = math.sin(pose.heading_rad)
+    # The horizontal FLU->NED matrix is symmetric and orthonormal, so its
+    # inverse has the same coefficients.
+    return c * delta_n + s * delta_e, s * delta_n - c * delta_e
+
+
+def transform_base_link_yaw_to_ned_heading(
+    yaw_rad: float,
+    pose: USVPoseNED,
+) -> float:
+    """Convert a local FLU yaw into a clockwise NED heading."""
+
+    local_yaw = _finite_number(yaw_rad, "yaw_rad")
+    heading = pose.heading_rad - local_yaw
+    return math.atan2(math.sin(heading), math.cos(heading))
+
+
 def dock_perception_result_to_json(result: DockPerceptionResult) -> str:
     """Serialize the perception contract consumed by ``usv_task3_executor``."""
 
@@ -177,4 +204,6 @@ __all__ = [
     "parse_coarse_center_json",
     "parse_usv_pose_json",
     "transform_base_link_points_to_ned",
+    "transform_base_link_yaw_to_ned_heading",
+    "transform_ned_point_to_base_link",
 ]

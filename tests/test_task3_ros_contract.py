@@ -1,11 +1,16 @@
 import unittest
 
 from dock_planner.task3_ros_contract import (
+    BestEffortWindowId,
+    COMMON_RTK_NED_FRAME,
     CorrectBayInfo,
     HeartbeatMonitor,
     SprayerWindowInfo,
     Task3RosMessageFactory,
+    Task3TargetIdGate,
     normalize_task_command,
+    official_bay_id_from_left_index,
+    official_window_id_from_side,
     validate_vehicle_heartbeat,
 )
 
@@ -76,6 +81,35 @@ class Task3RosContractTests(unittest.TestCase):
                 "source": "test",
             })
 
+    def test_official_dock_drawing_id_mapping(self):
+        self.assertEqual(
+            [official_bay_id_from_left_index(index) for index in range(3)],
+            [1, 2, 3],
+        )
+        self.assertEqual(official_window_id_from_side("left"), 1)
+        self.assertEqual(official_window_id_from_side("RIGHT"), 2)
+        with self.assertRaises(ValueError):
+            official_bay_id_from_left_index(3)
+        with self.assertRaises(ValueError):
+            official_window_id_from_side("center")
+
+    def test_best_effort_window_id_uses_side_then_deterministic_fallback(self):
+        window = BestEffortWindowId(fallback_id=1)
+        self.assertEqual(window.report_id, 1)
+        self.assertTrue(window.used_fallback)
+        self.assertIsNone(window.observe_side("UNKNOWN"))
+        self.assertEqual(window.observe_side("right"), 2)
+        self.assertEqual(window.report_id, 2)
+        self.assertFalse(window.used_fallback)
+        window.reset()
+        self.assertEqual(window.report_id, 1)
+
+        with self.assertRaises(ValueError):
+            BestEffortWindowId(fallback_id=3)
+
+    def test_formal_task3_frame_is_shared_rtk_ned(self):
+        self.assertEqual(COMMON_RTK_NED_FRAME, "robotx_rtk_ned")
+
     def test_window_progress_does_not_imply_completion(self):
         info = SprayerWindowInfo.from_mapping({
             "window_id": 1,
@@ -96,7 +130,7 @@ class Task3RosContractTests(unittest.TestCase):
 
     def test_firefighting_report_requires_green_five_seconds_and_pump_off(self):
         base = {
-            "window_id": 3,
+            "window_id": 2,
             "color": "GREEN",
             "confidence": 0.92,
             "observed_at_unix_ms": 123450,
@@ -113,7 +147,7 @@ class Task3RosContractTests(unittest.TestCase):
             {
                 "type": "firefighting",
                 "vehicle_id": "T-Wave",
-                "window_id": 3,
+                "window_id": 2,
                 "color": "GREEN",
             },
         )
@@ -131,6 +165,66 @@ class Task3RosContractTests(unittest.TestCase):
                 self.assertFalse(bad_info.firefighting_complete)
                 with self.assertRaises(ValueError):
                     self.factory.firefighting_report(bad_info)
+
+    def test_window_id_is_limited_to_two_official_windows(self):
+        with self.assertRaises(ValueError):
+            SprayerWindowInfo.from_mapping({
+                "window_id": 3,
+                "color": "RED",
+                "confidence": 0.9,
+                "observed_at_unix_ms": 123,
+                "pump_off": False,
+                "green_confirmed_duration_s": 0.0,
+                "completion_confirmed": False,
+                "source": "test",
+            })
+
+    def test_target_id_gate_requires_bay_then_locks_pair_until_reset(self):
+        gate = Task3TargetIdGate()
+        window_1 = SprayerWindowInfo.from_mapping({
+            "window_id": 1,
+            "color": "RED",
+            "confidence": 0.9,
+            "observed_at_unix_ms": 123,
+            "pump_off": False,
+            "green_confirmed_duration_s": 0.0,
+            "completion_confirmed": False,
+            "source": "test",
+        })
+        with self.assertRaisesRegex(ValueError, "before bay_id"):
+            gate.accept_window(window_1)
+
+        bay_2 = CorrectBayInfo.from_mapping({
+            "bay_id": 2,
+            "dock_id": "dock-A",
+            "confidence": 0.9,
+            "confirmed_at_unix_ms": 120,
+            "docking_confirmed": False,
+            "source": "test",
+        })
+        gate.accept_bay(bay_2)
+        gate.accept_window(window_1)
+        self.assertEqual(gate.context(), {
+            "dock_id": "dock-A",
+            "bay_id": 2,
+            "window_id": 1,
+        })
+
+        bay_3 = CorrectBayInfo.from_mapping({
+            "bay_id": 3,
+            "dock_id": "dock-A",
+            "confidence": 0.9,
+            "confirmed_at_unix_ms": 124,
+            "docking_confirmed": False,
+            "source": "test",
+        })
+        with self.assertRaisesRegex(ValueError, "already locked"):
+            gate.accept_bay(bay_3)
+
+        gate.reset()
+        gate.accept_bay(bay_3)
+        self.assertEqual(gate.context()["bay_id"], 3)
+        self.assertIsNone(gate.context()["window_id"])
 
     def test_structured_and_legacy_commands_normalize(self):
         structured = normalize_task_command({

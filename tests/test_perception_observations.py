@@ -8,6 +8,7 @@ from dock_planner import (
     NEDPoint,
     PreciseEntrancePoseNED,
     entrance_observation_to_precise_pose,
+    sort_entrances_left_to_right,
 )
 
 
@@ -31,6 +32,31 @@ class PerceptionObservationTests(unittest.TestCase):
         self.assertEqual(observation.entrance_center_east_m, -4.5)
         self.assertEqual(observation.source, "mid360_dock_perception")
         self.assertTrue(observation.valid)
+
+    def test_entrances_are_ordered_from_dock_left_to_right(self):
+        # Facing north into the dock, west/east are viewer-left/viewer-right.
+        unordered = (
+            self.make_entrance(entrance_center_east_m=2.0, entrance_heading_rad=0.0),
+            self.make_entrance(entrance_center_east_m=-2.0, entrance_heading_rad=0.02),
+            self.make_entrance(entrance_center_east_m=0.0, entrance_heading_rad=-0.02),
+        )
+        ordered = sort_entrances_left_to_right(unordered)
+        self.assertEqual(
+            [item.entrance_center_east_m for item in ordered],
+            [-2.0, 0.0, 2.0],
+        )
+
+        # Facing east, north/south are viewer-left/viewer-right.
+        east_facing = (
+            self.make_entrance(entrance_center_north_m=-2.0, entrance_heading_rad=math.pi / 2),
+            self.make_entrance(entrance_center_north_m=2.0, entrance_heading_rad=math.pi / 2),
+            self.make_entrance(entrance_center_north_m=0.0, entrance_heading_rad=math.pi / 2),
+        )
+        ordered = sort_entrances_left_to_right(east_facing)
+        self.assertEqual(
+            [item.entrance_center_north_m for item in ordered],
+            [2.0, 0.0, -2.0],
+        )
 
     def test_entrance_observation_rejects_bad_values(self):
         for field, value in (

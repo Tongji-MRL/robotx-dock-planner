@@ -27,6 +27,7 @@ setup(
             "task3_semantic_map_mock_adapter = usv_task3_executor.semantic_map_adapter:main",
             "task3_communication_adapter = usv_task3_executor.communication_adapter:main",
             "task3_ned_pose_adapter = usv_task3_executor.ned_pose_adapter:main",
+            "task3_vision_contract_adapter = usv_task3_executor.vision_contract_adapter:main",
         ]
     },
 )

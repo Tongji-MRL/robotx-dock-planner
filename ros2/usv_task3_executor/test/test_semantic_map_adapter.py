@@ -26,7 +26,7 @@ class SemanticMapDockParserTest(unittest.TestCase):
         self.assertTrue(result["valid"])
         self.assertEqual(result["source"], "semantic_map_mock")
         self.assertTrue(result["mock"])
-        self.assertEqual(result["frame_id"], "mock_ned")
+        self.assertEqual(result["frame_id"], "robotx_rtk_ned")
         self.assertNotIn("confidence", result)
 
     def test_selects_configured_dock_id(self):

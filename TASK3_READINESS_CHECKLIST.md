@@ -1,6 +1,6 @@
 # RobotX 2026 Task 3 完成度清单
 
-更新时间：2026-10-27
+更新时间：2026-11-09
 
 说明：`[x]` 表示已经实现或确认，`[ ]` 表示仍需完成。纯 Python 项目打勾，
 只代表逻辑和单元测试完成，不代表 ROS、硬件或实船已经验证。
@@ -11,10 +11,10 @@
 | P0 | [x] | 异常场景系统审计 | `TASK3_ABNORMAL_SCENARIOS.md` 已按任务前中后审计 158 项：52 已覆盖、34 部分覆盖、72 未覆盖 | 按矩阵继续补齐 61 个未覆盖 P0；相似项由统一 safety/watchdog/fault manager 合并解决 |
 | P0 | [x] | DockPlanner 最终靠泊几何 | approach、align、entrance、stop 基线测试通过 | 仍需通过适配器交给实船控制器执行 |
 | P0 | [x] | UAV 粗中心接口 | 已有 `CoarseDockCenterObservationNED` 和数据时效检查 | Orin ROS adapter 需要读取真实 semantic map 消息 |
-| P0 | [x] | UAV-NED 转 USV-NED 纯转换 | 已按 PDF 的 WGS84/ECEF/NED 公式实现；semantic map 可输出现有 coarse dock 中心接口；已确认两套 NED 轴共向 | 当前只需固定平移，无需 yaw 旋转 |
-| P0 | [ ] | UAV-NED 转 USV-NED 运行 adapter | 已有纯 Python 转换和 dry run | USV Orin 锁存 UAV 建图起点与 USV 任务起点，订阅状态机通信和 semantic map |
+| P0 | [x] | UAV/USV 共用 RTK NED 契约 | 正式 frame 固定为 `robotx_rtk_ned`；语义地图、UAV 位姿和 USV 位姿直接使用同一 RTK 参考点，不做双原点平移 | 上场前核对三路消息 frame ID、RTK fix 状态和同点坐标一致性 |
+| P0 | [x] | 旧双原点转换隔离 | 原 WGS84/ECEF/NED 平移实现仅保留作旧数据/离线回放兼容，不接正式主链路 | 若发现任一数据源仍是独立 FCU local origin，先修数据源或离线转换，不能只改 frame 名称 |
 | P0 | [x] | 中心点到 staging/搜索圆弧 | 安全半径已包含 dock、船体包络、粗测余量、粗定位误差与 stand-off；可区分圆外、圆周、圆内、最小包络内和中心重合；圆内生成径向外退目标 | 最小包络内的真实运动必须由 Mid-360 确认局部净空后再交给 goto |
-| P0 | [ ] | USV `base_link` 与船体外形 | 水平参考点为中央小盖板几何中心；图纸和粗测得到前 0.820 m、后 0.370 m、左右各 0.405 m；暂定二维包络半径 0.92 m，另留 0.10 m 粗测余量；详见 `USV_BASELINK说明.md` | 确认 Z 基准并统一飞控、GPS、LiDAR 外参；低速水测后再调整误差余量 |
+| P0 | [ ] | USV `base_link` 与船体外形 | 水平参考点为中央小盖板几何中心；图纸和粗测得到前 0.820 m、后 0.370 m、左右各 0.405 m；LiDAR 外参已更新并验证；详见 `USV_BASELINK说明.md` | 仍需确认 Z 基准并统一飞控/GPS 参考点；低速水测后再调整二维包络误差余量 |
 | P0 | [x] | 不同场地可航边界判断 | 同时检查顺/逆时针；切除不安全圆弧；两边均失败时可在明确的最小 stand-off 以上逐级缩小半径；圆内向外到 staging 的路径也检查；随机场地测试通过 | 现场换成真实可航行边界，并根据船体尺寸确定最小 stand-off；接入 executor 前仍不可视为实船闭环 |
 | P0 | [x] | 全路径连续边界检查 | approach、搜索圆弧 chord、terminal、退出和返航每段均做多边形求交与最小净距检查；自交边界被拒绝 | 动态障碍和 dock 实体仍需独立障碍层 |
 | P1 | [x] | Bay 去重和失败记忆 | 入口中心距离关联；颜色拒绝或 terminal 失败后跳过；三个 bay 全部不可用时结束搜索 | 用真实入口数据标定关联距离，并接 executor 失败事件 |
@@ -29,16 +29,16 @@
 | P0 | [x] | 公共避障模块接入契约 | `PROCEED/HOLD/REPLAN/ABORT` 带有效期；非 PROCEED、过期或严格模式下缺失均强制零速度 | Task1 公共模块确定 ROS 接口后只编写 adapter，并把 REPLAN/ABORT 接入任务监督器 |
 | P0 | [ ] | ROS 速度命令仲裁节点 | goto 和 terminal 当前都面向 `/usv/control/cmd_vel` | 分别重映射输入，只允许仲裁节点发布最终速度 |
 | P0 | [x] | MAVROS 工作区定位 | `/home/robotx/mavros_ws/install` 中已有节点和 local-position/setpoint 插件 | source 后做台架验证；当前终端环境尚未加载该 overlay |
-| P0 | [x] | Mid-360 驱动 | Orin 实测 `/livox/lidar` 为 `livox_ros_driver2/msg/CustomMsg`，约 10 Hz、单帧约 19968 点；另有 `/livox/imu` | 保留启动命令和配置，后续做开机启动评审 |
-| P0 | [x] | 共用 Mid-360 ROS2 包 | `ros2/robotx_perception_common/` 已同时支持 PointCloud2/CustomMsg、全零点过滤、`livox_frame → base_link` 转换；本地临时 colcon 构建通过 | 放入 Orin 工作区后再次构建，并核对真实 topic、frame 和启动参数 |
-| P0 | [x] | PointCloud2 纯解析核心 | 已按 Mid-360 实际 26-byte 混合字段布局实现 x/y/z 提取、NaN/Inf 过滤、全零占位点过滤和质量统计 | 使用 dock 现场 rosbag 验证入口识别结果 |
-| P0 | [x] | LiDAR ROS 输入 adapter（本地） | `task3_lidar_perception` 已支持实际 `CustomMsg` 和备用 PointCloud2；CustomMsg 解析/外参转换测试通过，临时 colcon 构建通过 | 在 Orin 构建节点，提供带 `heading_rad` 的 NED 位姿后用真实 dock/rosbag 验证入口结果 |
-| P0 | [x] | Mid-360 安装外参/TF | 已测得 `base_link → livox_frame` `(+0.15, 0, +0.22) m`；Orin 已建立静态 TF，`tf2_echo` 已验证 frame 和数值 | 水上低速转向测试后再确认安装误差余量 |
-| P0 | [ ] | Task3 LiDAR 入口识别 ROS bridge | 本地节点和 launch 已完成，默认订阅实际 `CustomMsg`；仍要求真实 coarse dock、带航向的 NED 位姿 | 在 Orin 安装后验证真实输入和 `/tongji_mrl/twave/task3/dock_perception`；当前离线 center-free prototype 不能直接替代任务起始粗中心 |
-| P1 | [x] | Mid-360 测试 rosbag | 已复制到本地并直接读取；12.664 s、62.8 MiB、126 帧点云 | 继续采集包含真实 dock 和多角度观察的 bag |
-| P1 | [x] | 真实点云质量统计 | 单帧 19872 点，XYZ 有限比例 100%；754 个全零占位点（约 3.8%）已识别，最大距离 8.840 m | 现场 dock 数据继续记录相同统计，注意原始数据保留全零点 |
-| P1 | [x] | 离线 dock 入口几何识别 | synthetic 点云与仿真多视角检测已经完成 | 用录制的 Mid-360 数据调参，不伪造 TF |
-| P1 | [ ] | 真实入口观测 | 已有 `DockEntranceObservationNED` 接口 | 确认 LiDAR frame 转换并验证入口中心和方向 |
+| P0 | [x] | Mid-360 驱动 | Orin 实测 `/livox/lidar` 为 `sensor_msgs/msg/PointCloud2`，约 10 Hz；另有 `/livox/imu` | 保留启动命令和配置，后续做开机启动评审 |
+| P0 | [x] | 共用 Mid-360 ROS2 包 | 本地公共包支持 PointCloud2/CustomMsg、全零点过滤和 `livox_frame → base_link`；Orin 统一工作区已重新构建成功，`ros2 pkg prefix` 指向 `/home/robotx/robotx_ws/install/robotx_perception_common` | 后续只需随最终仓库版本保持同步 |
+| P0 | [x] | PointCloud2 纯解析核心 | 已按 Mid-360 实际 26-byte 混合字段布局实现 x/y/z 提取、NaN/Inf 过滤、全零占位点过滤和质量统计；现场 bag 已完成解析 | 解析核心完成；入口真值验证单列在下方 |
+| P0 | [x] | LiDAR ROS 输入 adapter | `task3_lidar_perception` 默认订阅 Orin 实测的 PointCloud2，并保留 CustomMsg 显式兼容；点云解析、全零点过滤、外参转换和相关测试通过 | 输入接入本身完成；任务输出仍需要真实 coarse dock 和带航向 NED 位姿 |
+| P0 | [x] | Mid-360 安装外参/TF | 雷达左移 0.10 m 后，`base_link → livox_frame` 更新为 `(+0.15, +0.10, +0.22) m`、RPY 全 0；Orin `tf2_echo` 已实测矩阵和数值正确 | 固定外参已完成；若支架再次移动才需要重新测量 |
+| P0 | [ ] | Task3 LiDAR 入口识别 ROS bridge | 本地已改为粗中心约束的低矮 Dock 检测：同时支持纵向侧壁通道和横向正面开口，并检查入口及接近通道净空；PointCloud2、外参和 NED/FLU 方向转换测试通过 | 尚未同步 Orin；必须用现场粗中心和点云确认连续 3 次稳定入口后，才可恢复控制测试 |
+| P1 | [x] | Mid-360 测试 rosbag | 2 m、4 m、6 m和慢速经过四组有效 dock 数据已复制、解析和抽帧；原始 bag 保留 | 当前阶段不再要求采集新数据 |
+| P1 | [x] | 真实点云质量统计 | 单帧 19872 点，XYZ 有限比例 100%；754 个全零占位点（约 3.8%）已识别，最大距离 8.840 m | 当前阶段完成，无需新增采集 |
+| P1 | [x] | 离线 dock 入口几何识别 | 新检测器通过低矮 Dock、30% 点丢失、稀疏水面回波、两侧杂物、正面开口和入口堵塞回归测试；旧录制数据已做保守回放 | 旧 2/4/6 m 数据没有同步的粗中心和朝向真值，不能据此调高命中率或证明现场可用 |
+| P1 | [ ] | 真实入口观测 | 已有 `DockEntranceObservationNED` 接口；现场曾出现单次候选，但未连续稳定 | 同步本次算法后原地观察诊断日志，核对入口中心、方向和连续 3 次稳定性；失败时保持 MANUAL |
 | P1 | [x] | Dock 对齐接口确认 | `/robotx/perception/docking/alignment`，类型 `DockingStatus`；staging 已验证米/弧度/距离字段解析 | 正式合入前仍需使用现场消息做一次回放验证 |
 | P1 | [x] | 安全 bay 接口确认 | `/robotx/perception/docking/safe_bay` 实际为 `std_msgs/String`；另有独立 `safe_bay_indicator` 为 `LEDObservation`；staging 已分别核对 | 现场确认最终启用的 topic，不把两个 topic 混用 |
 | P1 | [x] | Bay 颜色有效性规则 | `UNKNOWN`、`NONE`、invalid、过期和 bay mismatch 均不会触发靠泊；staging 已验证 RED/GREEN | 使用现场感知节点做一次回放验证 |
@@ -56,17 +56,19 @@
 | P1 | [x] | 退出 dock 与返回几何 | 可生成 dock 外退出点和岸边等待目标点 | 每个场地配置经过确认的安全等待点 |
 | P1 | [ ] | 异常恢复接入 executor | 纯 Python 已能输出重试、退出和返回决策 | 接入 executor 状态与 goto DONE/ABORTED 反馈 |
 | P2 | [ ] | 复用 Task 1 避障 | 当前版本明确未实现 | 等 Task 1 源码/API 确认后再审计和接入 |
-| P0 | [ ] | Orin 代码同步 | 本地公共包已完成 CustomMsg 适配和构建验证 | 只同步 `ros2/robotx_perception_common/` 及其依赖变更，避免覆盖 Orin 其他人的代码 |
-| P0 | [ ] | Orin 无控制 dry run | 本地纯 Python 测试通过 | 使用 mock 或 rosbag 通过 ROS adapter 回放，不发送运动命令 |
+| P0 | [x] | LiDAR 公共包 Orin 同步 | Orin 源码外参、安装结果和 launch 均为 `y=+0.10 m`；公共包重新构建成功；驱动短时启动实测 PointCloud2 约 9.99 Hz | 已完成，测试进程已停止 |
+| P0 | [ ] | Task3 最终代码 Orin 同步 | LiDAR 公共包已同步，但其余 Task3 最终改动尚未做完整差异审计 | 逐包同步最终版本，避免覆盖其他人的工作区修改 |
+| P0 | [ ] | Orin 无控制 dry run | LiDAR 驱动与静态 TF smoke test 已通过，未启动任何控制节点 | 使用真实或 mock coarse dock、NED heading，让 ROS bridge 回放并确认 `dock_perception` 输出 |
 | P0 | [ ] | 分阶段水上测试 | 尚未执行 | 按安全门依次测试 approach/search、靠泊、水泵和返航 |
 | P0 | [ ] | 比赛级整链运行 | 尚未实现 | 完成全部未勾选 P0 项，并保存一次可重复运行记录 |
 
 ## 当前本地验证
 
 - 核心 pytest：`176 passed`；另有 6 个 Gazebo/VRX 静态测试因当前环境缺少 WAM-V URDF 和官方 SDF 未运行通过，不能视为代码失败。
-- 独立 LiDAR prototype：`18 tests passed`；200 组随机 synthetic 场景严格成功率 98.5%，
+- 独立 LiDAR prototype：`22 tests passed`；LiDAR 输入/外参/搜索相关组合复测 `24 tests passed`；200 组随机 synthetic 场景严格成功率 98.5%，
   32 个仿真视角中 5 个可见入口视角全部选对最高候选，覆盖 3 个 bay。
-- 真实 Mid-360 bag 抽帧：已验证 `livox_frame`、混合字段解析和全零点过滤。
+- 真实 Mid-360 bag 抽帧：已验证 `livox_frame`、混合字段解析、全零点过滤、无粗中心候选搜索和多帧跟踪。
+- Orin 实机 smoke test：`/livox/lidar` 为 `sensor_msgs/msg/PointCloud2`、约 9.99 Hz；静态 TF 为 `[0.15, 0.10, 0.22] m`、RPY 全 0。
 - `examples.task3_full_dry_run`：粗中心到喷水及颜色序列，运动到达事件使用 mock。
 - `examples.task3_safety_recovery_dry_run`：随机边界、安全圆弧、三次尝试、退出 dock 和岸边等待点。
 - `examples.task3_control_handoff_dry_run`：STOP、GOTO、TERMINAL 三种速度控制权切换。

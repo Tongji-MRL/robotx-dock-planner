@@ -81,7 +81,7 @@ result = planner.plan(
 
 以下流程是 Task 3 后续真实接入的固定流程，仿真 thrust 控制器只是独立的验证路径：
 
-1. **UAV 粗定位**：UAV 至少提供 dock ID、转换到 USV NED 后的粗中心、timestamp
+1. **UAV 粗定位**：UAV 至少提供 dock ID、共享 RTK NED 中的粗中心、timestamp
    和 valid；如果以后能提供四个大致角点，则使用 `CoarseDockInfo` 保存。角点只是
    粗几何，不能作为精确边界，也不能直接推导入口。
 2. **Approach Dock**：中心点方案根据已知 dock 外形尺寸、停船距离和定位误差计算
@@ -107,7 +107,7 @@ result = planner.plan(
 结果，不解析点云。颜色处理同理通过 `ColorDetector` 消费视觉模型输出。
 
 ```text
-UAV coarse center in USV NED
+UAV coarse center in shared RTK NED
         |
         v
 safe-circle staging goal
@@ -333,13 +333,12 @@ Orin 现有的 ROS executor 已收回本仓库：ROS 包元数据和 launch 文�
 提供通用通信适配，由 `usv_state_machine` 提供车辆级 heartbeat；当前 Task3 adapter
 用于接口联调，暂不在 Task3 包外复制一份。
 
-`ned_map_adapter.py` 实现 UAV 建图 NED 到 USV 本地 NED 的纯坐标适配。它使用 UAV
-建图起点和 USV 任务起点的 WGS84 经纬度及椭球高，先计算固定 NED 平移，再把
-`/task/semantic_map` 中的 dock 中心转换成 `CoarseDockCenterObservationNED`。转换不
-依赖 ROS、OCS 或 PX4，也不会根据车辆当前移动位置重复计算原点。项目接口已确认两套
-NED 的北、东、下方向一致，因此当前转换只做平移，不增加 yaw 旋转。
+正式任务坐标统一使用固定 RTK 参考点建立的 `robotx_rtk_ned`。UAV 语义地图中的 dock、
+UAV 位姿和 USV 位姿均直接携带这一 frame ID，Task3 只核对 frame ID 后使用坐标，不在
+主链路重复做 UAV 原点到 USV 原点的平移。`ned_map_adapter.py` 保留为旧数据和离线回放
+兼容工具；只有输入明确来自两套不同局部原点时才使用，不能接在正式共享 RTK 主链路上。
 
-坐标链纯 Python 演示：
+旧双局部原点坐标链的纯 Python 兼容演示：
 
 ```bash
 python3 -m examples.task3_ned_map_dry_run
