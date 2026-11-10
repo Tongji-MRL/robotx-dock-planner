@@ -27,13 +27,36 @@ Task3 只发布内部任务数据。对 UAV/OCS 的通信、ACK、重试和当�
 |---|---|
 | `dock_planner/` | 纯 Python 规划、流程、安全边界、重试与接口契约 |
 | `usv_task3_executor/` | ROS 2 executor、语义地图、感知和通信适配节点 |
-| `ros2/usv_task3_executor/` | ament Python 包、launch、包级测试 |
+| `ros2/usv_task3_executor/` | ament Python executor、launch、包级测试 |
 | `tests/` | 不依赖实船的核心单元测试 |
 | `TASK3_ROS_INTERFACE.md` | ROS topic 与消息约定 |
 | `TASK3_COMMUNICATION_PROTOCOL.md` | 子状态机与总状态机通信协议 |
 | `TASK3_ABNORMAL_SCENARIOS.md` | 异常场景、处理策略与完成情况 |
 | `TASK3_READINESS_CHECKLIST.md` | 上船前检查清单 |
+| `TASK3_FIELD_TEST_RUNBOOK.md` | 实船分阶段测试、安全门、故障处理与数据交接手册 |
 | `USV_BASELINK说明.md` | `base_link`、船体包络与待测外参 |
+
+## 与 USV Orin 统一工作区的对应关系
+
+`robotx_workspace/repos/usv_real.repos` 将本仓库固定检出到：
+
+```text
+/home/robotx/robotx_ws/src/task3/robotx-dock-planner
+```
+
+因此不要把本仓库手工复制成第二份，也不要把其中的包再复制到 `src/perception/`。
+本仓库内部的 ROS 包保持如下结构，`colcon` 会递归发现它们：
+
+```text
+robotx-dock-planner/
+├── dock_planner/                         # 纯 Python Task3 规划与契约
+├── usv_task3_executor/                   # 规划层 Python 适配实现
+├── ros2/usv_task3_executor/              # ROS 2 executor 包与 launch
+```
+
+统一工作区的公共感知、平台 I/O、通信和其他任务仍由各自 manifest 仓库提供；本仓库只
+提供 Task3 所需的规划和 executor。Mid-360 公共感知包由统一工作区的
+`src/perception/robotx_perception_common` 提供，不能在 Task3 下再放一份。
 
 ## Orin 构建
 
@@ -63,6 +86,11 @@ ros2 launch usv_task3_executor task3_executor.launch.py platform_id:=0 dry_run:=
 `dry_run:=false` 只关闭 mock 输入许可，不会自行接管 PX4。导航目标仍需经过工作区中的
 运动控制权仲裁和车辆控制适配器。
 
+Mid-360 感知包不在本仓库重复启动；由统一工作区的
+`robotx_perception_common` 包负责驱动、静态 TF 和入口感知桥接。当前测得的
+`base_link -> livox_frame = (+0.15, +0.10, +0.22) m`，安装角暂按零度处理；移动传感器
+或重新安装后，更新统一感知包和 `USV_BASELINK说明.md`。
+
 ## 主要输入与输出
 
 | 方向 | Topic | 说明 |
@@ -80,7 +108,9 @@ ros2 launch usv_task3_executor task3_executor.launch.py platform_id:=0 dry_run:=
 ## 当前边界
 
 - 语义地图只提供 dock/platform 粗中心，不生成假入口、假角点或假 heading。
-- Mid-360 点云驱动和 PointCloud2/CustomMsg 转换属于 `robotx_perception`。
+- Mid-360 驱动由 `livox_ros_driver2` 提供；统一工作区的
+  `src/perception/robotx_perception_common` 负责 `CustomMsg`/PointCloud2 转换、
+  `livox_frame -> base_link` 和 Task3 感知桥接。
 - 飞控 setpoint、避障输出和控制权仲裁属于统一工作区公共包。
 - 喷水完成由窗口从红变绿并持续稳定判定；泵本身没有“水已喷入”传感器。
 - 真实运行前仍需确认定位消息中的 heading、可航行边界、控制器到达反馈和实测外参。
