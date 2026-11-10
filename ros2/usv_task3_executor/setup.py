@@ -8,10 +8,11 @@ setup(
     # Keep the ROS wrapper here while installing the planner directly from the
     # repository root.  This avoids maintaining a second copy of dock_planner
     # inside the ROS package.
-    packages=["usv_task3_executor", "dock_planner"],
+    packages=["usv_task3_executor", "dock_planner", "usv_reactive_avoidance"],
     package_dir={
         "usv_task3_executor": "../../usv_task3_executor",
         "dock_planner": "../../dock_planner",
+        "usv_reactive_avoidance": "../../usv_reactive_avoidance",
     },
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -28,6 +29,7 @@ setup(
             "task3_communication_adapter = usv_task3_executor.communication_adapter:main",
             "task3_ned_pose_adapter = usv_task3_executor.ned_pose_adapter:main",
             "task3_vision_contract_adapter = usv_task3_executor.vision_contract_adapter:main",
+            "usv_reactive_avoidance = usv_task3_executor.reactive_avoidance_node:main",
         ]
     },
 )

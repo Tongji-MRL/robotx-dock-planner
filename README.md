@@ -195,6 +195,26 @@ camera image -> color detection -> selected bay -> PreciseEntrancePoseNED
 
 ### 速度控制接口
 
+#### Task 3 / Task 4 共用的反应式避障 core
+
+`usv_reactive_avoidance` 是不依赖 ROS 的 `LaserScan` 避障 core，可同时供
+Task 3 和 Task 4 调用。它不使用浮标类别或语义标签；船体前向扫掠通道内
+连续出现的任何有效点簇都按障碍物处理，并提供连续帧确认、释放滞回、
+紧急停车距离和锁定的左右绕行方向。
+
+Task 3 进入 `TERMINAL_DOCKING` 后，普通避障退出，由入口对准和末端靠泊
+控制器负责进 Dock，避免两侧 Dock 墙触发错误绕行。
+
+ROS 包装节点当前只发布 `PROCEED`、`HOLD` 或 `REPLAN` 决策，不直接控制
+推进器：
+
+```bash
+ros2 launch usv_task3_executor task3_reactive_avoidance.launch.py
+ros2 topic echo /tongji_mrl/twave/navigation/avoidance
+```
+
+非末端靠泊阶段如果雷达消息丢失或超时，节点发布 `HOLD`。
+
 `GenericVelocityCommand` 是控制逻辑与具体执行后端之间的内部速度契约，包含
 `surge_mps`（前向速度，m/s）、`yaw_rate_rps`（偏航角速度，rad/s）、
 `timestamp`、`valid_until`、`phase`、`source` 和 `frame_id`。时间戳使用调用方
