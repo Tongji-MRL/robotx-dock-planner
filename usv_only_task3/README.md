@@ -135,3 +135,12 @@ ros2 launch usv_task3_executor task3_usv_only_executor.launch.py \
 
 LiDAR 输入选择仍由现有感知 launch 决定：优先 `/cloud_registered_body`，不可用时用
 `/livox/lidar`。状态机只消费统一 `dock_perception`，没有复制或修改感知算法。
+
+## Task4 Core / Advanced 衔接
+
+参见 [Task4 接口与恢复说明](TASK4_HANDOFF.md)。新执行器支持四阶段存档、
+Core 暂停冻结动作计时、恢复入口复核，以及主状态机下发的圆形禁行区约束。
+`PAUSED` 的原 30 秒超时只用于普通故障；Core 暂停等待主状态机显式恢复。
+禁行区穿越检查和绕行覆盖搜索、入坞与退出。
+对于船外的圆形禁行区，执行器会在四角 geofence 内生成切线和圆弧绕行航点，
+选择顺、逆时针中较短的可行路线；无边界内可行路线时释放控制并报告原因。

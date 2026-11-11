@@ -23,8 +23,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         (
             "share/" + package_name + "/launch",
-            glob("launch/*.launch.py")
-            + glob("../../usv_only_task3/launch/*.launch.py"),
+            glob("launch/*.launch.py"),
         ),
     ],
     install_requires=["setuptools"],

@@ -9,7 +9,9 @@ is represented by the distinct ``COMPLETE`` state.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from copy import deepcopy
+import uuid
 from enum import Enum
 import math
 from typing import Mapping, Sequence
@@ -24,6 +26,11 @@ from dock_planner.geofence_search import (
 )
 from dock_planner.integration import DockEntranceObservationNED, NEDPoint
 from dock_planner.types import Pose2D
+from dock_planner.task3_mission_policy import (
+    Task3NavigationConstraint,
+    plan_keep_out_detour,
+    resume_phase,
+)
 
 
 class UsvOnlyTask3State(str, Enum):
@@ -85,6 +92,8 @@ class UsvOnlyTask3Config:
     max_search_passes: int = 2
     bay_entry_depth_m: float = 1.0
     fallback_window_id: int = 1
+    keep_out_detour_margin_m: float = 0.5
+    keep_out_arc_spacing_m: float = 1.0
     geofence: GeofenceSearchConfig = field(default_factory=GeofenceSearchConfig)
     stable_entrances: StableEntranceConfig = field(default_factory=StableEntranceConfig)
     state_timeouts_s: Mapping[UsvOnlyTask3State, float] = field(
@@ -102,6 +111,10 @@ class UsvOnlyTask3Config:
             raise ValueError("bay_entry_depth_m must be finite and nonnegative")
         if self.fallback_window_id not in (1, 2):
             raise ValueError("fallback_window_id must be 1 or 2")
+        if not math.isfinite(self.keep_out_detour_margin_m) or self.keep_out_detour_margin_m < 0:
+            raise ValueError("keep_out_detour_margin_m must be finite and nonnegative")
+        if not math.isfinite(self.keep_out_arc_spacing_m) or self.keep_out_arc_spacing_m <= 0:
+            raise ValueError("keep_out_arc_spacing_m must be positive and finite")
         for state, timeout in self.state_timeouts_s.items():
             if not isinstance(state, UsvOnlyTask3State) or not math.isfinite(timeout) or timeout <= 0:
                 raise ValueError("state timeouts must map states to positive finite seconds")
@@ -151,10 +164,22 @@ class UsvOnlyTask3FlowManager:
         self._resume_state: UsvOnlyTask3State | None = None
         self._retry_state: UsvOnlyTask3State | None = None
         self._retry_counts: dict[UsvOnlyTask3State, int] = {}
+        self.navigation_constraint = Task3NavigationConstraint()
+        self.navigation_hold_reason = None
+        self._navigation_hold_at = None
+        self.core_checkpoint = None
+        self._core_paused = False
+        self._resume_elapsed = {}
+        self._needs_dock_revalidation = False
+        self._revalidation_at_observation = False
+        self.watering_completed = False
+        self._detour_waypoints: list[Pose2D] = []
+        self._detour_side: str | None = None
+
 
     @property
     def releases_control(self) -> bool:
-        return self.state in {
+        return bool(self.navigation_hold_reason) or self.state in {
             UsvOnlyTask3State.IDLE, UsvOnlyTask3State.WAIT_INPUTS,
             UsvOnlyTask3State.PLAN_SEARCH,
             UsvOnlyTask3State.COMPLETE, UsvOnlyTask3State.PAUSED,
@@ -164,8 +189,14 @@ class UsvOnlyTask3FlowManager:
 
     @property
     def current_goal(self) -> Pose2D | None:
-        if self.search_plan is None:
+        if self.releases_control or self.search_plan is None:
             return None
+        if self._detour_waypoints:
+            return self._detour_waypoints[0]
+        return self._mission_goal
+
+    @property
+    def _mission_goal(self) -> Pose2D | None:
         if self.state in {
             UsvOnlyTask3State.TRANSIT_TO_SEARCH,
             UsvOnlyTask3State.SEARCH_PRIMARY,
@@ -190,11 +221,18 @@ class UsvOnlyTask3FlowManager:
 
     def _enter(self, state: UsvOnlyTask3State, now: float, detail: str = "") -> None:
         self.state = state
-        self.state_entered_at = now
+        self.state_entered_at = now - self._resume_elapsed.pop(state, 0.0)
         self.detail = detail
 
     def start(self, now: float) -> None:
+        constraint = self.navigation_constraint
+        hold_reason = self.navigation_hold_reason
         self.__init__(self.config)
+        # START/RESET are not AllClear and must never remove an active zone.
+        self.navigation_constraint = constraint
+        self.navigation_hold_reason = hold_reason
+        if hold_reason:
+            self._navigation_hold_at = now
         self._enter(UsvOnlyTask3State.WAIT_INPUTS, now)
 
     def begin(
@@ -230,10 +268,11 @@ class UsvOnlyTask3FlowManager:
             return
         ready, reason = health.ready(now, self.config)
         if not ready and self.state is not UsvOnlyTask3State.PAUSED:
-            self._resume_state = self.state
-            self._enter(UsvOnlyTask3State.PAUSED, now, reason)
+            self.pause(reason, now=now)
 
     def resume(self, *, now: float) -> bool:
+        if self._core_paused or self.navigation_hold_reason:
+            return False
         if self.state is not UsvOnlyTask3State.PAUSED or self.health is None:
             return False
         ready, reason = self.health.ready(now, self.config)
@@ -246,6 +285,13 @@ class UsvOnlyTask3FlowManager:
         return True
 
     def navigation_reached(self, *, now: float) -> None:
+        if self.navigation_hold_reason:
+            return
+        if self._detour_waypoints:
+            self._detour_waypoints.pop(0)
+            if not self._detour_waypoints:
+                self._detour_side = None
+            return
         if self.state is UsvOnlyTask3State.TRANSIT_TO_SEARCH:
             self._enter(UsvOnlyTask3State.SEARCH_PRIMARY, now)
             return
@@ -273,7 +319,11 @@ class UsvOnlyTask3FlowManager:
             self.fail("DOCK_NOT_FOUND_AFTER_BOUNDED_SEARCH", now)
             return
         if self.state is UsvOnlyTask3State.APPROACH_DOCK:
-            self._enter(UsvOnlyTask3State.INSPECT_BAYS, now)
+            if self._needs_dock_revalidation:
+                self._revalidation_at_observation = True
+                self._enter(UsvOnlyTask3State.VERIFY_DOCK, now)
+            else:
+                self._enter(UsvOnlyTask3State.INSPECT_BAYS, now)
             return
         if self.state is UsvOnlyTask3State.INSPECT_BAYS:
             return
@@ -292,11 +342,17 @@ class UsvOnlyTask3FlowManager:
         *,
         now: float,
     ) -> bool:
-        if self.state not in {
+        if self.navigation_hold_reason or self._core_paused:
+            return False
+        revalidating = self.state is UsvOnlyTask3State.VERIFY_DOCK and self._needs_dock_revalidation
+        if not revalidating and self.state not in {
             UsvOnlyTask3State.TRANSIT_TO_SEARCH,
             UsvOnlyTask3State.SEARCH_PRIMARY,
             UsvOnlyTask3State.SEARCH_SECONDARY,
         }:
+            return False
+        if any(not item.valid or now - item.timestamp > self.config.pose_timeout_s
+               or item.timestamp > now + 0.1 for item in observations):
             return False
         self._dock_frames.append(tuple(observations))
         keep = max(self.config.stable_entrances.required_frame_hits * 3, 6)
@@ -306,17 +362,37 @@ class UsvOnlyTask3FlowManager:
         )
         if layout is None:
             return False
+        if revalidating and self.layout is not None:
+            # Preserve bay identity only if every entrance matches the saved layout.
+            if len(layout.bays) != len(self.layout.bays):
+                return False
+            for old, new in zip(self.layout.bays, layout.bays):
+                if math.hypot(old.entrance.entrance_center_north_m - new.entrance.entrance_center_north_m,
+                              old.entrance.entrance_center_east_m - new.entrance.entrance_center_east_m) > self.config.stable_entrances.association_distance_m:
+                    return False
+                angle = old.entrance.entrance_heading_rad - new.entrance.entrance_heading_rad
+                if abs(math.atan2(math.sin(angle), math.cos(angle))) > self.config.stable_entrances.association_heading_rad:
+                    return False
         self.layout = layout
-        self._active_bay_index = 0
+        if not revalidating:
+            self._active_bay_index = 0
+        self._needs_dock_revalidation = False
         self._enter(UsvOnlyTask3State.VERIFY_DOCK, now)
         return True
 
     def dock_verified(self, *, now: float) -> None:
+        if self.navigation_hold_reason or self._needs_dock_revalidation:
+            raise RuntimeError("fresh dock revalidation is required")
         if self.state is not UsvOnlyTask3State.VERIFY_DOCK or self.layout is None:
             raise RuntimeError("no stable dock layout is ready for verification")
-        self._enter(UsvOnlyTask3State.APPROACH_DOCK, now)
+        destination = (UsvOnlyTask3State.INSPECT_BAYS if self._revalidation_at_observation
+                       else UsvOnlyTask3State.APPROACH_DOCK)
+        self._revalidation_at_observation = False
+        self._enter(destination, now)
 
     def accept_bay_color(self, color: str, confidence: float, *, now: float) -> bool:
+        if self.navigation_hold_reason:
+            return False
         if self.state is not UsvOnlyTask3State.INSPECT_BAYS or self.layout is None:
             return False
         if not math.isfinite(confidence) or confidence < 0.5:
@@ -333,11 +409,15 @@ class UsvOnlyTask3FlowManager:
         return False
 
     def hold_confirmed(self, *, now: float) -> None:
+        if self.navigation_hold_reason:
+            return False
         if self.state is not UsvOnlyTask3State.HOLD_POSITION:
             raise RuntimeError("hold confirmation is only valid after entering the bay")
         self._enter(UsvOnlyTask3State.AIM_WINDOW, now)
 
     def aiming_ready(self, *, gimbal_ready: bool, window_id: int | None, now: float) -> bool:
+        if self.navigation_hold_reason:
+            return False
         if self.state is not UsvOnlyTask3State.AIM_WINDOW or not gimbal_ready:
             return False
         self.window_id = window_id if window_id in (1, 2) else self.config.fallback_window_id
@@ -345,11 +425,16 @@ class UsvOnlyTask3FlowManager:
         return True
 
     def spray_complete(self, *, now: float) -> None:
+        if self.navigation_hold_reason:
+            return False
         if self.state is not UsvOnlyTask3State.SPRAY_WATER:
             raise RuntimeError("spray completion is only valid while spraying")
+        self.watering_completed = True
         self._enter(UsvOnlyTask3State.REPORT_RESULT, now)
 
     def result_reported(self, *, now: float) -> None:
+        if self.navigation_hold_reason:
+            return False
         if self.state is not UsvOnlyTask3State.REPORT_RESULT:
             raise RuntimeError("result preparation is only valid while reporting")
         self._enter(UsvOnlyTask3State.EXIT_DOCK, now)
@@ -390,9 +475,15 @@ class UsvOnlyTask3FlowManager:
         return True
 
     def pause(self, reason: str, *, now: float) -> None:
-        if self.state in _TERMINAL_STATES:
+        if self.state in _TERMINAL_STATES or self.state is UsvOnlyTask3State.PAUSED:
             return
+        effective_now = self._navigation_hold_at if self._navigation_hold_at is not None else now
+        self._resume_elapsed[self.state] = max(0.0, effective_now - self.state_entered_at)
         self._resume_state = self.state
+        # Resume from the current pose and replan the detour; never reuse a
+        # tangent waypoint computed before the interruption.
+        self._detour_waypoints.clear()
+        self._detour_side = None
         self._enter(UsvOnlyTask3State.PAUSED, now, reason or "PAUSED")
 
     def abort(self, reason: str, *, now: float) -> None:
@@ -415,13 +506,14 @@ class UsvOnlyTask3FlowManager:
         self._enter(UsvOnlyTask3State.RETRY, now, reason)
 
     def tick(self, *, now: float) -> None:
+        if self._core_paused or self.navigation_hold_reason:
+            return
         if self.state in _TERMINAL_STATES or self.state is UsvOnlyTask3State.IDLE:
             return
         if self.health is not None:
             ready, reason = self.health.ready(now, self.config)
             if not ready and self.state is not UsvOnlyTask3State.PAUSED:
-                self._resume_state = self.state
-                self._enter(UsvOnlyTask3State.PAUSED, now, reason)
+                self.pause(reason, now=now)
                 return
         timeout = self.config.state_timeouts_s.get(self.state)
         if timeout is None or now - self.state_entered_at < timeout:
@@ -434,9 +526,154 @@ class UsvOnlyTask3FlowManager:
             return
         self._retry_or_fail(self.state, f"{self.state.value}_TIMEOUT", now)
 
+    def pause_for_core(self, *, now: float) -> dict:
+        if self._core_paused:
+            return deepcopy(self.core_checkpoint)
+        saved = self._resume_state if self.state is UsvOnlyTask3State.PAUSED else self.state
+        saved = saved or self.state
+        context = {
+            "correct_bay_confirmed": self.bay_id is not None,
+            "watering_completed": self.watering_completed,
+            "bay_id": self.bay_id, "window_id": self.window_id,
+            "layout": None if self.layout is None else asdict(self.layout),
+            "coarse_dock_center": None if self.layout is None else asdict(self.layout.coarse_center_ned),
+            "search_pass": self._search_pass, "line_index": self._line_index,
+            "station_index": self._station_index, "active_bay_index": self._active_bay_index,
+            "retry_counts": {state.value: count for state, count in self._retry_counts.items()},
+            "frame_id": self.config.required_frame_id,
+        }
+        self.core_checkpoint = {
+            "checkpoint_id": str(uuid.uuid4()), "saved_step": saved.value,
+            "resume_phase": resume_phase(saved.value, context).value,
+            "elapsed_s": self._resume_elapsed.get(saved, max(0.0, now - self.state_entered_at)),
+            "context": context, "motion_stopped_confirmed": False,
+        }
+        self.pause("TASK4_CORE", now=now)
+        self._core_paused = self.state is UsvOnlyTask3State.PAUSED
+        return deepcopy(self.core_checkpoint)
+
+    def resume_core(self, checkpoint_id: str, *, motion_stopped: bool,
+                    dock_exit_completed: bool = False, now: float) -> bool:
+        if not self._core_paused or self.core_checkpoint is None:
+            return False
+        if checkpoint_id != self.core_checkpoint["checkpoint_id"]:
+            raise ValueError("checkpoint_id does not match")
+        if motion_stopped is not True:
+            raise ValueError("main must confirm motion_stopped")
+        if self.navigation_hold_reason or self.health is None or not self.health.ready(now, self.config)[0]:
+            return False
+        if self.watering_completed and dock_exit_completed is not True:
+            self.detail = "WAIT_MAIN_DOCK_EXIT_CONFIRMATION"
+            return False
+        saved = self._resume_state or UsvOnlyTask3State.WAIT_INPUTS
+        if self.watering_completed:
+            destination = UsvOnlyTask3State.COMPLETE
+        elif self.layout is not None:
+            # The boat may have moved during Task4: do not reuse old entrance
+            # detections or jump straight back to spraying.
+            destination = UsvOnlyTask3State.APPROACH_DOCK
+            self._needs_dock_revalidation = True
+            self._dock_frames.clear()
+        else:
+            destination = saved
+        self._core_paused = False
+        self._resume_state = None
+        self._enter(destination, now, "CORE_RESUMED")
+        return True
+
+    def apply_navigation_constraint(self, value: Mapping, *, now: float) -> bool:
+        try:
+            changed = self.navigation_constraint.apply(value)
+        except (TypeError, ValueError):
+            self.hold_navigation("INVALID_NAVIGATION_CONSTRAINT", now=now)
+            raise
+        if not changed:
+            return False
+        # Main has stopped motion and supplied its decision. Clear stale
+        # confirmations; preserve task progress and the Core checkpoint.
+        self._dock_frames.clear()
+        self._detour_waypoints.clear()
+        self._detour_side = None
+        if self._navigation_hold_at is not None:
+            self.state_entered_at += max(0.0, now - self._navigation_hold_at)
+        self._navigation_hold_at = None
+        self.navigation_hold_reason = None
+        if self.navigation_constraint.hold_reason:
+            self.hold_navigation(self.navigation_constraint.hold_reason, now=now)
+        return True
+
+    def hold_navigation(self, reason: str, *, now: float) -> None:
+        if self._navigation_hold_at is None:
+            self._navigation_hold_at = now
+        self.navigation_hold_reason = reason
+
+    def guard_current_goal(self, *, now: float) -> bool:
+        if self.navigation_hold_reason:
+            return False
+        goal = self.current_goal
+        if goal is None or self.current_pose is None:
+            return False
+        if self.health is None or not self.health.ready(now, self.config)[0]:
+            self.pause("NAVIGATION_REQUIRES_FRESH_HEALTH", now=now)
+            return False
+        if self._detour_waypoints:
+            zone = self.navigation_constraint.zone
+            if zone is not None and zone.contains(
+                (self.current_pose.x, self.current_pose.y)
+            ):
+                self.hold_navigation("WAIT_MAIN_ZONE_EXIT", now=now)
+                self._detour_waypoints.clear()
+                self._detour_side = None
+                return False
+            return True
+        reason = self.navigation_constraint.segment_block_reason(
+            (self.current_pose.x, self.current_pose.y), (goal.x, goal.y),
+            self.config.required_frame_id)
+        if reason == "KEEP_OUT_REPLAN_REQUIRED":
+            zone = self.navigation_constraint.zone
+            if zone is None or self.search_plan is None:
+                self.hold_navigation("KEEP_OUT_REPLAN_UNAVAILABLE", now=now)
+                return False
+            boundary = tuple((point.north, point.east)
+                             for point in self.search_plan.ordered_corners)
+            try:
+                detour = plan_keep_out_detour(
+                    self.current_pose,
+                    goal,
+                    zone,
+                    boundary=boundary,
+                    detour_margin_m=self.config.keep_out_detour_margin_m,
+                    arc_spacing_m=self.config.keep_out_arc_spacing_m,
+                )
+            except (TypeError, ValueError) as exc:
+                self.hold_navigation(str(exc), now=now)
+                return False
+            self._detour_waypoints = list(detour.waypoints[:-1])
+            self._detour_side = detour.side
+            if not self._detour_waypoints:
+                self.hold_navigation("KEEP_OUT_REPLAN_EMPTY", now=now)
+                return False
+            return True
+        if reason:
+            self.hold_navigation(reason, now=now)
+            return False
+        return True
+
     def status(self) -> dict[str, object]:
         return {
             "state": self.state.value,
+            "resume_phase": resume_phase(
+                (self._resume_state or self.state).value,
+                {"correct_bay_confirmed": self.bay_id is not None,
+                 "watering_completed": self.watering_completed,
+                 "coarse_dock_center": self.layout}).value,
+            "core_checkpoint_id": None if self.core_checkpoint is None else self.core_checkpoint["checkpoint_id"],
+            "core_paused": self._core_paused,
+            "retry_counts": {state.value: count for state, count in self._retry_counts.items()},
+            "navigation_constraint": self.navigation_constraint.to_dict(),
+            "navigation_hold_reason": self.navigation_hold_reason,
+            "keep_out_detour_side": self._detour_side,
+            "keep_out_detour_waypoints_remaining": len(self._detour_waypoints),
             "detail": self.detail,
             "error": self.error,
             "bay_id": self.bay_id,

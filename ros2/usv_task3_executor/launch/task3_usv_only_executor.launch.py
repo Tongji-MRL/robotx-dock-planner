@@ -12,6 +12,8 @@ def generate_launch_description():
         DeclareLaunchArgument("required_ned_frame_id", default_value="robotx_rtk_ned"),
         DeclareLaunchArgument("goto_target_topic", default_value="/safe_passage/goto/target"),
         DeclareLaunchArgument("goto_status_topic", default_value="/safe_passage/goto/status"),
+        DeclareLaunchArgument("keep_out_detour_margin_m", default_value="0.5"),
+        DeclareLaunchArgument("keep_out_arc_spacing_m", default_value="1.0"),
         Node(
             package="usv_task3_executor",
             executable="task3_usv_only_executor",
@@ -25,6 +27,12 @@ def generate_launch_description():
                 "required_ned_frame_id": LaunchConfiguration("required_ned_frame_id"),
                 "goto_target_topic": LaunchConfiguration("goto_target_topic"),
                 "goto_status_topic": LaunchConfiguration("goto_status_topic"),
+                "keep_out_detour_margin_m": ParameterValue(
+                    LaunchConfiguration("keep_out_detour_margin_m"), value_type=float
+                ),
+                "keep_out_arc_spacing_m": ParameterValue(
+                    LaunchConfiguration("keep_out_arc_spacing_m"), value_type=float
+                ),
             }],
         ),
     ])

@@ -59,6 +59,8 @@ class UsvOnlyTask3Executor(Node):
         self.declare_parameter("pose_timeout_s", 2.0)
         self.declare_parameter("max_retries_per_state", 2)
         self.declare_parameter("max_search_passes", 2)
+        self.declare_parameter("keep_out_detour_margin_m", 0.5)
+        self.declare_parameter("keep_out_arc_spacing_m", 1.0)
         self.declare_parameter("goto_target_topic", "/safe_passage/goto/target")
         self.declare_parameter("goto_status_topic", "/safe_passage/goto/status")
 
@@ -69,14 +71,23 @@ class UsvOnlyTask3Executor(Node):
             pose_timeout_s=float(self.get_parameter("pose_timeout_s").value),
             max_retries_per_state=int(self.get_parameter("max_retries_per_state").value),
             max_search_passes=int(self.get_parameter("max_search_passes").value),
+            keep_out_detour_margin_m=float(
+                self.get_parameter("keep_out_detour_margin_m").value
+            ),
+            keep_out_arc_spacing_m=float(
+                self.get_parameter("keep_out_arc_spacing_m").value
+            ),
         ))
         self._corners: tuple[NEDPoint, ...] | None = None
         self._pose: Pose2D | None = None
         self._health: UsvHealth | None = None
         self._last_state = None
         self._last_goal = None
+        self._goal_running = False
 
         self.create_subscription(String, "/tongji_mrl/twave/task_cmd", self._on_command, 10)
+        self.create_subscription(String, "/tongji_mrl/twave/task3/navigation_constraint",
+                                 self._on_navigation_constraint, 10)
         self.create_subscription(String, "/tongji_mrl/twave/task3/geofence", self._on_geofence, 10)
         self.create_subscription(String, "/tongji_mrl/twave/ned_position", self._on_pose, 10)
         self.create_subscription(String, "/tongji_mrl/twave/task3/vehicle_health", self._on_health, 10)
@@ -94,6 +105,8 @@ class UsvOnlyTask3Executor(Node):
         self.create_subscription(Bool, "/tongji_mrl/twave/task3/spray_complete", self._on_spray, 10)
         self.create_subscription(Bool, "/tongji_mrl/twave/task3/dock_verified", self._on_dock_verified, 10)
 
+        self.state_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/state", 10)
+        self.checkpoint_pub = self.create_publisher(String, "/tongji_mrl/twave/checkpoint", 10)
         self.progress_pub = self.create_publisher(String, "/tongji_mrl/twave/progress", 10)
         self.preview_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/goto_preview", 10)
         self.goto_pub = self.create_publisher(
@@ -109,26 +122,81 @@ class UsvOnlyTask3Executor(Node):
     def _on_command(self, msg: String) -> None:
         try:
             value = _object(msg.data)
-            if str(value.get("task", "TASK3")).upper() != "TASK3":
+            if str(value.get("vehicle", "usv")).lower() != "usv":
+                return
+            task = str(value.get("task", "TASK3")).upper()
+            now = time.time()
+            if task == "TASK4":
+                raw = value.get("command", {})
+                if not isinstance(raw, dict):
+                    raise ValueError("TASK4 command must be an object")
+                kind = raw.get("type")
+                if kind == "TASK4_BEGIN":
+                    self._pause_core(now)
+                elif kind in {"TASK4_KEEP_OUT", "TASK4_ALL_CLEAR"}:
+                    constraint = dict(raw)
+                    constraint.pop("type")
+                    constraint["active"] = kind == "TASK4_KEEP_OUT"
+                    self.manager.apply_navigation_constraint(constraint, now=now)
+                    self._last_goal = None
+                    self._goal_running = False
+                else:
+                    return
+                self._publish()
+                return
+            if task != "TASK3":
                 return
             command = str(value.get("command", value.get("type", ""))).upper()
-            now = time.time()
-            if command in {"START", "START_TASK3", "TASK3_BEGIN"}:
+            if command in {"START", "BEGIN", "START_TASK3", "TASK3_BEGIN"}:
+                if self.manager.state not in {UsvOnlyTask3State.IDLE, UsvOnlyTask3State.COMPLETE}:
+                    raise ValueError("active mission requires RESUME or explicit RESET")
                 self.manager.start(now)
                 self._try_begin(now)
             elif command in {"PAUSE", "PAUSE_TASK3"}:
-                self.manager.pause("PAUSED_BY_MASTER", now=now)
+                self._pause_core(now)
             elif command in {"RESUME", "RESUME_TASK3"}:
-                self.manager.resume(now=now)
+                if self.manager.status()["core_paused"]:
+                    self.manager.resume_core(value.get("checkpoint_id"),
+                        motion_stopped=value.get("motion_stopped"),
+                        dock_exit_completed=value.get("dock_exit_completed", False), now=now)
+                else:
+                    self.manager.resume(now=now)
+                self._last_goal = None
+                self._goal_running = False
             elif command in {"ABORT", "SAFE_STOP", "END"}:
                 self.manager.abort("ABORTED_BY_MASTER", now=now)
             elif command == "RESET":
-                self.manager = UsvOnlyTask3FlowManager(self.manager.config)
+                self.manager.start(now)
+                self.manager._enter(UsvOnlyTask3State.IDLE, now)
+                self._last_goal = None
+                self._goal_running = False
             else:
                 raise ValueError(f"unsupported command {command!r}")
             self._publish()
         except (TypeError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
             self._warn("task command", exc)
+
+    def _pause_core(self, now: float) -> None:
+        checkpoint = self.manager.pause_for_core(now=now)
+        self._last_goal = None
+        self._goal_running = False
+        message = String()
+        message.data = json.dumps({
+            "vehicle": "usv", "task": "TASK3", "command": "checkpoint",
+            "progress": checkpoint["saved_step"], "error": None,
+            **checkpoint,
+        }, separators=(",", ":"))
+        self.checkpoint_pub.publish(message)
+
+    def _on_navigation_constraint(self, msg: String) -> None:
+        try:
+            if self.manager.apply_navigation_constraint(_object(msg.data), now=time.time()):
+                self._last_goal = None
+                self._goal_running = False
+        except (TypeError, ValueError) as exc:
+            self.manager.hold_navigation("INVALID_NAVIGATION_CONSTRAINT", now=time.time())
+            self._warn("navigation constraint", exc)
+        self._publish()
 
     def _on_geofence(self, msg: String) -> None:
         try:
@@ -243,8 +311,14 @@ class UsvOnlyTask3Executor(Node):
 
     def _on_goto(self, msg: String) -> None:
         try:
+            if self.manager.releases_control or self._last_goal is None:
+                return
             status = parse_goto_status(msg.data)
-            if status.kind.value == "DONE":
+            if status.kind.value == "RUNNING":
+                self._goal_running = True
+            if status.kind.value == "DONE" and self._goal_running:
+                self._goal_running = False
+                self._last_goal = None
                 self.manager.navigation_reached(now=time.time())
             elif status.kind.value == "ABORTED":
                 self.manager.pause(f"GOTO_ABORTED:{status.reason}", now=time.time())
@@ -312,13 +386,21 @@ class UsvOnlyTask3Executor(Node):
         self._publish()
 
     def _publish(self) -> None:
+        if self.manager.current_goal is not None:
+            self.manager.guard_current_goal(now=time.time())
         status = self.manager.status()
+        diagnostic = String()
+        diagnostic.data = json.dumps(status, separators=(",", ":"))
+        self.state_pub.publish(diagnostic)
         state_key = json.dumps(status, sort_keys=True)
         if state_key != self._last_state:
             progress = String()
-            progress.data = json.dumps(
-                self.manager.progress_report(), separators=(",", ":")
-            )
+            report = self.manager.progress_report()
+            for key in ("resume_phase", "core_checkpoint_id", "core_paused", "retry_counts",
+                        "navigation_hold_reason", "navigation_constraint",
+                        "keep_out_detour_side", "keep_out_detour_waypoints_remaining"):
+                report[key] = status[key]
+            progress.data = json.dumps(report, separators=(",", ":"))
             self.progress_pub.publish(progress)
             self._last_state = state_key
         release = Bool(); release.data = self.manager.releases_control
@@ -333,13 +415,21 @@ class UsvOnlyTask3Executor(Node):
         if goal_key == self._last_goal:
             return
         self._last_goal = goal_key
+        self._goal_running = False
         if goal is None:
             return
         payload = {
             "frame_id": self.manager.config.required_frame_id,
             "north_m": goal.x, "east_m": goal.y, "heading_rad": goal.yaw,
-            "phase": self.manager.state.value,
-            "avoidance_enabled": self.manager.state is not UsvOnlyTask3State.ENTER_BAY,
+            "phase": ("KEEP_OUT_DETOUR" if status["keep_out_detour_side"]
+                      else self.manager.state.value),
+            "task3_phase": self.manager.state.value,
+            "keep_out_detour_side": status["keep_out_detour_side"],
+            "avoidance_enabled": (
+                status["keep_out_detour_side"] is not None
+                or self.manager.state is not UsvOnlyTask3State.ENTER_BAY
+            ),
+            "navigation_constraint": self.manager.navigation_constraint.to_dict(),
         }
         msg = String(); msg.data = json.dumps(payload, separators=(",", ":"))
         self.preview_pub.publish(msg)

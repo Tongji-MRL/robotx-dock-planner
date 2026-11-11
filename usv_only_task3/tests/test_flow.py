@@ -180,3 +180,119 @@ class UsvOnlyFlowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class Task4IntegrationTests(unittest.TestCase):
+    make_manager = UsvOnlyFlowTests.make_manager
+    begin = UsvOnlyFlowTests.begin
+    stable_frame = UsvOnlyFlowTests.stable_frame
+
+    def zone(self, revision=1, inside=False):
+        return dict(run_id=7, revision=revision, motion_stopped=True, active=True,
+                    inside=inside, frame_id='robotx_rtk_ned',
+                    center_ned={'north': 10, 'east': 5}, radius_m=2, clearance_m=1)
+
+    def test_core_pause_is_idempotent_and_freezes_budget(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager._retry_counts[UsvOnlyTask3State.TRANSIT_TO_SEARCH] = 1
+        checkpoint = manager.pause_for_core(now=4)
+        self.assertEqual(checkpoint['resume_phase'], 'EXPLORING')
+        self.assertEqual(manager.pause_for_core(now=99), checkpoint)
+        manager.tick(now=1000)
+        self.assertEqual(manager.state, UsvOnlyTask3State.PAUSED)
+        self.assertFalse(manager.resume(now=1000))  # cannot bypass Core handshake
+        manager.update_health(health(1000), Pose2D(2, 2, 0), now=1000)
+        self.assertTrue(manager.resume_core(checkpoint['checkpoint_id'], motion_stopped=True, now=1000))
+        self.assertEqual(manager.state_entered_at, 996)
+        self.assertEqual(manager._retry_counts[UsvOnlyTask3State.TRANSIT_TO_SEARCH], 1)
+        self.assertEqual(manager.state, UsvOnlyTask3State.TRANSIT_TO_SEARCH)
+
+    def test_known_bay_reapproaches_and_requires_fresh_geometry(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager.accept_dock_frame(self.stable_frame(1), Pose2D(0, 5, 0), now=1)
+        manager.accept_dock_frame(self.stable_frame(2), Pose2D(0, 5, 0), now=2)
+        manager.dock_verified(now=2)
+        manager.navigation_reached(now=3)
+        manager.accept_bay_color('GREEN', .9, now=3)
+        checkpoint = manager.pause_for_core(now=4)
+        self.assertEqual(checkpoint['resume_phase'], 'CORRECT_BAY_KNOWN')
+        manager.update_health(health(100), Pose2D(0, 5, 0), now=100)
+        manager.resume_core(checkpoint['checkpoint_id'], motion_stopped=True, now=100)
+        self.assertEqual(manager.state, UsvOnlyTask3State.APPROACH_DOCK)
+        manager.navigation_reached(now=101)
+        with self.assertRaises(RuntimeError):
+            manager.dock_verified(now=101)
+        self.assertFalse(manager.accept_dock_frame(self.stable_frame(1), Pose2D(0, 5, 0), now=101))
+        manager.accept_dock_frame(self.stable_frame(101), Pose2D(0, 5, 0), now=101)
+        self.assertTrue(manager.accept_dock_frame(self.stable_frame(102), Pose2D(0, 5, 0), now=102))
+        manager.dock_verified(now=102)
+        self.assertEqual(manager.state, UsvOnlyTask3State.INSPECT_BAYS)
+        self.assertEqual(manager.bay_id, 1)
+
+    def test_completed_watering_never_restarts_pump_on_resume(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager.state = UsvOnlyTask3State.SPRAY_WATER
+        manager.bay_id, manager.window_id = 2, 1
+        manager.spray_complete(now=2)
+        checkpoint = manager.pause_for_core(now=3)
+        self.assertEqual(checkpoint['resume_phase'], 'RETURNING')
+        manager.update_health(health(100), Pose2D(2, 2, 0), now=100)
+        self.assertFalse(manager.resume_core(checkpoint['checkpoint_id'], motion_stopped=True, now=100))
+        self.assertTrue(manager.resume_core(checkpoint['checkpoint_id'], motion_stopped=True,
+                                            dock_exit_completed=True, now=100))
+        self.assertEqual(manager.state, UsvOnlyTask3State.COMPLETE)
+
+    def test_all_clear_does_not_resume_core(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager.apply_navigation_constraint(self.zone(inside=True), now=1)
+        checkpoint = manager.pause_for_core(now=2)
+        manager.apply_navigation_constraint(dict(run_id=7, revision=2, motion_stopped=True, active=False), now=100)
+        self.assertEqual(manager.state, UsvOnlyTask3State.PAUSED)
+        self.assertEqual(manager.core_checkpoint, checkpoint)
+        self.assertIsNone(manager.current_goal)
+
+    def test_constraint_survives_restart_and_generates_bounded_detour(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager.apply_navigation_constraint(self.zone(), now=1)
+        manager.start(2)
+        self.assertIsNotNone(manager.navigation_constraint.zone)
+        manager.begin(corners(), Pose2D(1, 1, 0), health(2), now=2)
+        original_goal = manager.current_goal
+        self.assertTrue(manager.guard_current_goal(now=2))
+        self.assertIsNone(manager.navigation_hold_reason)
+        self.assertIsNotNone(manager.current_goal)
+        self.assertNotEqual(manager.current_goal, original_goal)
+        self.assertGreater(manager.status()['keep_out_detour_waypoints_remaining'], 0)
+        self.assertIn(manager.status()['keep_out_detour_side'],
+                      {'CLOCKWISE', 'COUNTERCLOCKWISE'})
+        self.assertFalse(manager.releases_control)
+
+        detour_count = manager.status()['keep_out_detour_waypoints_remaining']
+        for index in range(detour_count):
+            manager.current_pose = manager.current_goal
+            manager.health = health(3 + index)
+            manager.navigation_reached(now=3 + index)
+            self.assertEqual(manager.state, UsvOnlyTask3State.TRANSIT_TO_SEARCH)
+        self.assertEqual(manager.current_goal, original_goal)
+        manager.current_pose = original_goal
+        manager.health = health(100)
+        manager.navigation_reached(now=100)
+        self.assertEqual(manager.state, UsvOnlyTask3State.SEARCH_PRIMARY)
+
+    def test_no_boundary_safe_detour_releases_control_without_using_retry(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        zone = self.zone()
+        zone.update(radius_m=4.9, clearance_m=0.0)
+        manager.apply_navigation_constraint(zone, now=1)
+        before = dict(manager._retry_counts)
+        self.assertFalse(manager.guard_current_goal(now=1))
+        self.assertEqual(manager.navigation_hold_reason,
+                         'KEEP_OUT_NO_DETOUR_INSIDE_GEOFENCE')
+        self.assertTrue(manager.releases_control)
+        manager.tick(now=10000)
+        self.assertEqual(manager._retry_counts, before)
