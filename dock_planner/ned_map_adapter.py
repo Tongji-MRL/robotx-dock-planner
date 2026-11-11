@@ -112,6 +112,13 @@ def uav_origin_in_usv_ned(uav_origin: GpsOrigin, usv_origin: GpsOrigin) -> NedOf
     return north, east, down
 
 
+def geodetic_point_to_ned(point: GpsOrigin, origin: GpsOrigin) -> NEDPoint:
+    """Express one WGS84 point in the local NED frame established by origin."""
+
+    north, east, down = uav_origin_in_usv_ned(point, origin)
+    return NEDPoint(north, east, down)
+
+
 def add_ned_offset(position: Sequence[float], offset: NedOffset) -> NEDPoint:
     """Translate one three-element UAV NED position into USV NED."""
 
@@ -229,6 +236,7 @@ __all__ = [
     "NedOffset",
     "add_ned_offset",
     "geodetic_to_ecef",
+    "geodetic_point_to_ned",
     "semantic_map_to_coarse_docks",
     "transform_semantic_map",
     "uav_origin_in_usv_ned",

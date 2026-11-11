@@ -69,7 +69,7 @@ from .lidar_transform import (
     transform_lidar_points_to_base_link,
 )
 from .ned_map_adapter import (
-    GpsOrigin, NedOffset, add_ned_offset, geodetic_to_ecef,
+    GpsOrigin, NedOffset, add_ned_offset, geodetic_to_ecef, geodetic_point_to_ned,
     semantic_map_to_coarse_docks, transform_semantic_map,
     uav_origin_in_usv_ned,
 )
@@ -169,6 +169,7 @@ __all__ = [
     "transform_lidar_points_to_base_link", "transform_lidar_point_to_base_link",
     "transform_base_link_points_to_lidar",
     "GpsOrigin", "NedOffset", "add_ned_offset", "geodetic_to_ecef",
+    "geodetic_point_to_ned",
     "semantic_map_to_coarse_docks", "transform_semantic_map",
     "uav_origin_in_usv_ned",
     "COLOR_SEQUENCE_TOPIC", "COLOR_SEQUENCE_MESSAGE_TYPE", "ColorCode",

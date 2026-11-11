@@ -1,5 +1,9 @@
 # DockPlanner V0.1
 
+USV-only Task 3 子状态机、geofence 搜索接口和明确的
+`COMPLETE -> TASK3_FINISH` 完成约定见
+[`usv_only_task3/README.md`](usv_only_task3/README.md)。
+
 独立纯 Python 几何规划器，仅依赖标准库，建议 Python 3.8+。
 不依赖 reference 仓库、固定场景、ROS 2 或 Gazebo。
 
