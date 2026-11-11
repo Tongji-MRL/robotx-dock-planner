@@ -44,6 +44,25 @@ UNSEEDED DOCK CONFIRMED: 3 entrances
 The simulation exercises the production PointCloud2 perception node.  It does
 not model water dynamics, propulsion, or collision avoidance.
 
+## Gazebo visualization
+
+From the repository root, run:
+
+```bash
+bash scripts/run_gazebo_geofence_search.sh
+```
+
+The Garden GUI shows the official four-corner geofence, the inset primary and
+fallback search lines, a three-bay VRX dock, and an orange WAM-V moving along
+the primary search line.  Grey is the geofence, cyan is the primary line, blue
+is the fallback line, green marks the recovered entrances, and yellow shows
+their inward headings.
+
+This Gazebo scene checks the route geometry and spatial relationship to the
+dock.  The WAM-V motion is a pose animation; it does not use propulsion,
+hydrodynamics, collision avoidance, or the production perception node.  Use
+the RViz launch above to exercise the production PointCloud2 perception path.
+
 ## Real perception launch
 
 After Livox, RTK pose, and the common TF are running:

@@ -11,6 +11,7 @@ log/
 # Gazebo runtime state and logs
 generated/logs/
 generated/runtime/
+generated/runtime_geofence/
 
 # Generated screenshots
 generated/*.png
@@ -23,6 +24,8 @@ generated/gz_phase2_entrance
 generated/gz_phase3_stop
 generated/gz_full_docking
 generated/scan_dock_deliver_phase3.sdf
+generated/task3_geofence_search.sdf
+generated/task3_geofence_search.json
 
 # Local answer snapshot maintained by Codex
 answer.txt
