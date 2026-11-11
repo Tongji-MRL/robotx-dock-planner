@@ -15,6 +15,14 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("input_topic", default_value="/livox/lidar"),
         DeclareLaunchArgument("input_format", default_value="pointcloud2"),
+        DeclareLaunchArgument("input_frame_mode", default_value="sensor"),
+        DeclareLaunchArgument("expected_input_frame", default_value=""),
+        DeclareLaunchArgument("input_to_base_x_m", default_value="0.15"),
+        DeclareLaunchArgument("input_to_base_y_m", default_value="0.10"),
+        DeclareLaunchArgument("input_to_base_z_m", default_value="0.22"),
+        DeclareLaunchArgument("input_to_base_roll_rad", default_value="0.0"),
+        DeclareLaunchArgument("input_to_base_pitch_rad", default_value="0.0"),
+        DeclareLaunchArgument("input_to_base_yaw_rad", default_value="0.0"),
         DeclareLaunchArgument(
             "coarse_dock_topic",
             default_value="/tongji_mrl/twave/task3/coarse_dock",
@@ -75,6 +83,20 @@ def generate_launch_description():
             parameters=[{
                 "input_topic": LaunchConfiguration("input_topic"),
                 "input_format": LaunchConfiguration("input_format"),
+                "input_frame_mode": LaunchConfiguration("input_frame_mode"),
+                "expected_input_frame": LaunchConfiguration("expected_input_frame"),
+                "input_to_base_x_m": LaunchConfiguration("input_to_base_x_m"),
+                "input_to_base_y_m": LaunchConfiguration("input_to_base_y_m"),
+                "input_to_base_z_m": LaunchConfiguration("input_to_base_z_m"),
+                "input_to_base_roll_rad": LaunchConfiguration(
+                    "input_to_base_roll_rad"
+                ),
+                "input_to_base_pitch_rad": LaunchConfiguration(
+                    "input_to_base_pitch_rad"
+                ),
+                "input_to_base_yaw_rad": LaunchConfiguration(
+                    "input_to_base_yaw_rad"
+                ),
                 "coarse_dock_topic": LaunchConfiguration("coarse_dock_topic"),
                 "usv_pose_topic": LaunchConfiguration("usv_pose_topic"),
                 "output_topic": LaunchConfiguration("output_topic"),

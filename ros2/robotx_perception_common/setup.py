@@ -15,6 +15,10 @@ setup(
             "launch/task3_geofence_search_rviz.launch.py",
             "launch/task3_lidar_bringup.launch.py",
             "launch/task3_lidar_perception.launch.py",
+            "launch/task3_lio_perception.launch.py",
+        ]),
+        (f"share/{package_name}/config", [
+            "config/task3_fast_lio_mid360_pointcloud2.yaml",
         ]),
         (f"share/{package_name}/rviz", [
             "rviz/task3_geofence_search.rviz",

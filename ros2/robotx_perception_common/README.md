@@ -172,6 +172,34 @@ ros2 launch robotx_perception_common task3_lidar_perception.launch.py \
   unseeded_min_entrances:=3
 ```
 
+## 航行中使用 FAST-LIO 去畸变点云
+
+沿 geofence 搜索线航行时，直接使用一帧原始扫描会受船体平移、转向和水面起伏
+影响。可选启动文件会同时启动 FAST-LIO，并把它输出的当前机体系去畸变点云
+`/cloud_registered_body` 送入同一个入口检测器：
+
+```bash
+ros2 launch robotx_perception_common task3_lio_perception.launch.py
+```
+
+该模式仍使用 RTK NED 作为全局任务坐标；FAST-LIO 只负责扫描内去畸变和短时
+运动估计。它不会替代 RTK，也不会使用持续累积的 `/cloud_registered` 地图来识别
+Dock。启动前需确保工作区内已有 ROS 2 包 `fast_lio`，并且 `/livox/lidar` 为
+`sensor_msgs/msg/PointCloud2`、`/livox/imu` 为 `sensor_msgs/msg/Imu`。
+
+若 FAST-LIO 未正常输出，停止该启动文件后仍可用原始点云回退：
+
+```bash
+ros2 launch robotx_perception_common task3_lidar_perception.launch.py \
+  detector_mode:=unseeded_lines \
+  local_max_candidates:=6 \
+  local_max_range_m:=15.0 \
+  local_lateral_half_width_m:=15.0
+```
+
+组合启动会校验输入点云的 `frame_id` 必须为 `body`，防止误把世界系累计地图
+当成船体系当前扫描。FAST-LIO 应在船静止时先完成 IMU 初始化，再开始搜索航行。
+
 如果驱动切换为 Livox CustomMsg，可以显式选择：
 
 ```bash

@@ -33,9 +33,11 @@ from robotx_perception_common.local_dock_detector import (
     detect_local_entrances_debug,
 )
 from robotx_perception_common.lidar_transform import (
+    LidarExtrinsics,
     custom_msg_to_base_link_xyz,
     pointcloud_message_to_base_link_xyz,
 )
+from robotx_perception_common.pointcloud_adapter import pointcloud2_message_to_xyz
 
 from .task3_lidar_bridge_core import (
     USVPoseNED,
@@ -58,6 +60,17 @@ class Task3LidarPerceptionNode(Node):
         # CustomMsg support available as an explicit override for older driver
         # configurations, but make the observed runtime format the default.
         self.declare_parameter("input_format", "pointcloud2")
+        # ``sensor`` means points are expressed in the Mid-360/LIO body frame
+        # and still need the measured installation transform. ``base_link`` is
+        # reserved for an upstream component that already performed it.
+        self.declare_parameter("input_frame_mode", "sensor")
+        self.declare_parameter("expected_input_frame", "")
+        self.declare_parameter("input_to_base_x_m", 0.15)
+        self.declare_parameter("input_to_base_y_m", 0.10)
+        self.declare_parameter("input_to_base_z_m", 0.22)
+        self.declare_parameter("input_to_base_roll_rad", 0.0)
+        self.declare_parameter("input_to_base_pitch_rad", 0.0)
+        self.declare_parameter("input_to_base_yaw_rad", 0.0)
         self.declare_parameter("coarse_dock_topic", "/tongji_mrl/twave/task3/coarse_dock")
         self.declare_parameter("usv_pose_topic", "/tongji_mrl/twave/ned_position")
         self.declare_parameter("output_topic", "/tongji_mrl/twave/task3/dock_perception")
@@ -92,6 +105,20 @@ class Task3LidarPerceptionNode(Node):
         self._pose: Optional[USVPoseNED] = None
         self._last_process_time = 0.0
         self._last_diagnostic_log_time = 0.0
+        self._input_frame_mode = str(
+            self.get_parameter("input_frame_mode").value
+        ).strip().lower()
+        if self._input_frame_mode not in {"sensor", "base_link"}:
+            raise ValueError("input_frame_mode must be sensor or base_link")
+        self._input_extrinsics = LidarExtrinsics(
+            x_m=float(self.get_parameter("input_to_base_x_m").value),
+            y_m=float(self.get_parameter("input_to_base_y_m").value),
+            z_m=float(self.get_parameter("input_to_base_z_m").value),
+            roll_rad=float(self.get_parameter("input_to_base_roll_rad").value),
+            pitch_rad=float(self.get_parameter("input_to_base_pitch_rad").value),
+            yaw_rad=float(self.get_parameter("input_to_base_yaw_rad").value),
+            child_frame="input_sensor_frame",
+        )
         self._unseeded_frames = deque(maxlen=max(
             3, int(self.get_parameter("unseeded_history_frames").value)
         ))
@@ -149,10 +176,12 @@ class Task3LidarPerceptionNode(Node):
         )
         self.get_logger().info(
             "Task3 LiDAR perception bridge ready; input_format=%s; "
+            "input_frame_mode=%s; "
             "detector_mode=%s; waiting for "
             "inputs required by the selected mode."
             % (
                 str(self.get_parameter("input_format").value),
+                self._input_frame_mode,
                 str(self.get_parameter("detector_mode").value),
             )
         )
@@ -169,6 +198,30 @@ class Task3LidarPerceptionNode(Node):
         if input_format in {"pointcloud2", "point_cloud2"}:
             return self.create_subscription(PointCloud2, topic, self._on_cloud, 10)
         raise ValueError("input_format must be custom_msg or pointcloud2")
+
+    def _cloud_points_in_base_link(self, message: Any) -> np.ndarray:
+        """Extract one cloud and return points in the USV ``base_link`` frame."""
+
+        expected = str(
+            self.get_parameter("expected_input_frame").value
+        ).strip().lstrip("/")
+        actual = str(getattr(getattr(message, "header", None), "frame_id", ""))
+        actual = actual.strip().lstrip("/")
+        if expected and actual != expected:
+            raise ValueError(
+                f"input frame mismatch: expected {expected!r}, received {actual!r}"
+            )
+
+        input_format = str(self.get_parameter("input_format").value).strip().lower()
+        if self._input_frame_mode == "base_link":
+            if input_format in {"custom", "custom_msg", "livox_custom"}:
+                raise ValueError(
+                    "base_link input_frame_mode requires PointCloud2 input"
+                )
+            return pointcloud2_message_to_xyz(message)
+        if input_format in {"custom", "custom_msg", "livox_custom"}:
+            return custom_msg_to_base_link_xyz(message, self._input_extrinsics)
+        return pointcloud_message_to_base_link_xyz(message, self._input_extrinsics)
 
     def _on_coarse(self, message: String) -> None:
         try:
@@ -360,11 +413,7 @@ class Task3LidarPerceptionNode(Node):
         if self._pose is not None and pose_timeout >= 0.0 and wall_time - self._pose.timestamp > pose_timeout:
             return
         try:
-            input_format = str(self.get_parameter("input_format").value).strip().lower()
-            if input_format in {"custom", "custom_msg", "livox_custom"}:
-                points_base = custom_msg_to_base_link_xyz(message)
-            else:
-                points_base = pointcloud_message_to_base_link_xyz(message)
+            points_base = self._cloud_points_in_base_link(message)
             timestamp = self._message_timestamp(message)
             result = None
             if unseeded_mode:
