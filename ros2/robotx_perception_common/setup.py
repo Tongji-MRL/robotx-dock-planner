@@ -11,8 +11,13 @@ setup(
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
         (f"share/{package_name}", ["package.xml"]),
         (f"share/{package_name}/launch", [
+            "launch/task3_geofence_search_sim.launch.py",
+            "launch/task3_geofence_search_rviz.launch.py",
             "launch/task3_lidar_bringup.launch.py",
             "launch/task3_lidar_perception.launch.py",
+        ]),
+        (f"share/{package_name}/rviz", [
+            "rviz/task3_geofence_search.rviz",
         ]),
     ],
     install_requires=["setuptools", "numpy"],
@@ -24,6 +29,7 @@ setup(
     entry_points={
         "console_scripts": [
             "task3_lidar_perception = robotx_perception_common.task3_lidar_perception_node:main",
+            "task3_geofence_search_simulator = robotx_perception_common.task3_geofence_search_simulator_node:main",
         ],
     },
 )

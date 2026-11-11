@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import math
 import time
@@ -18,7 +19,13 @@ try:
 except ImportError:  # pragma: no cover - available on the Orin ROS overlay
     CustomMsg = None
 
-from dock_planner import DockPerceptionConfig, NumpyDockPerception
+from dock_planner import (
+    DockPerceptionConfig,
+    NumpyDockPerception,
+    Pose2D,
+    StableEntranceConfig,
+    stabilize_entrance_layout,
+)
 from dock_planner.integration import DockEntranceObservationNED, DockPerceptionResult
 from robotx_perception_common.local_dock_detector import (
     LocalDockDetectorConfig,
@@ -64,24 +71,37 @@ class Task3LidarPerceptionNode(Node):
         self.declare_parameter("local_min_confidence", 0.30)
         self.declare_parameter("local_coarse_gate_m", 8.0)
         self.declare_parameter("local_max_candidates", 3)
+        self.declare_parameter("local_max_range_m", 10.0)
         self.declare_parameter("local_z_min_m", -0.35)
         self.declare_parameter("local_z_max_m", 0.85)
         self.declare_parameter("local_cluster_distance_m", 0.28)
         self.declare_parameter("local_min_wall_length_m", 0.65)
         self.declare_parameter("local_lateral_half_width_m", 3.0)
         self.declare_parameter("local_coarse_roi_radius_m", 6.0)
+        self.declare_parameter("unseeded_history_frames", 6)
+        self.declare_parameter("unseeded_required_detections", 3)
+        self.declare_parameter("unseeded_min_entrances", 3)
+        self.declare_parameter("unseeded_association_distance_m", 0.75)
+        self.declare_parameter("unseeded_heading_tolerance_rad", 0.35)
+        self.declare_parameter("unseeded_dock_depth_m", 6.0)
+        self.declare_parameter("unseeded_observation_standoff_m", 4.0)
+        self.declare_parameter("required_ned_frame_id", "robotx_rtk_ned")
         self.declare_parameter("diagnostic_log_period_s", 2.0)
 
         self._coarse = None
         self._pose: Optional[USVPoseNED] = None
         self._last_process_time = 0.0
         self._last_diagnostic_log_time = 0.0
+        self._unseeded_frames = deque(maxlen=max(
+            3, int(self.get_parameter("unseeded_history_frames").value)
+        ))
         self._detector = NumpyDockPerception(DockPerceptionConfig(
             roi_radius_m=float(self.get_parameter("roi_radius_m").value),
             min_confidence=float(self.get_parameter("min_confidence").value),
             source="mid360_task3_lidar_perception",
         ))
         self._local_detector_config = LocalDockDetectorConfig(
+            max_range_m=float(self.get_parameter("local_max_range_m").value),
             z_min_m=float(self.get_parameter("local_z_min_m").value),
             z_max_m=float(self.get_parameter("local_z_max_m").value),
             cluster_distance_m=float(
@@ -109,6 +129,11 @@ class Task3LidarPerceptionNode(Node):
             str(self.get_parameter("output_topic").value),
             10,
         )
+        self._coarse_pub = self.create_publisher(
+            String,
+            str(self.get_parameter("coarse_dock_topic").value),
+            10,
+        )
         self._cloud_sub = self._create_cloud_subscription()
         self._coarse_sub = self.create_subscription(
             String,
@@ -125,7 +150,7 @@ class Task3LidarPerceptionNode(Node):
         self.get_logger().info(
             "Task3 LiDAR perception bridge ready; input_format=%s; "
             "detector_mode=%s; waiting for "
-            "coarse dock and NED pose with heading_rad."
+            "inputs required by the selected mode."
             % (
                 str(self.get_parameter("input_format").value),
                 str(self.get_parameter("detector_mode").value),
@@ -218,6 +243,100 @@ class Task3LidarPerceptionNode(Node):
             valid=True,
         )
 
+    def _stabilize_unseeded_result(
+        self,
+        result: DockPerceptionResult,
+        *,
+        timestamp: float,
+    ) -> Optional[DockPerceptionResult]:
+        """Require repeated three-bay geometry and publish its coarse centre."""
+
+        if self._pose is None:
+            return None
+        self._unseeded_frames.append(result.entrance_observations)
+        layout = stabilize_entrance_layout(
+            tuple(self._unseeded_frames),
+            Pose2D(
+                self._pose.north_m,
+                self._pose.east_m,
+                self._pose.heading_rad,
+            ),
+            StableEntranceConfig(
+                required_frame_hits=max(
+                    1,
+                    int(self.get_parameter("unseeded_required_detections").value),
+                ),
+                min_entrances=max(
+                    1,
+                    int(self.get_parameter("unseeded_min_entrances").value),
+                ),
+                association_distance_m=float(
+                    self.get_parameter("unseeded_association_distance_m").value
+                ),
+                association_heading_rad=float(
+                    self.get_parameter("unseeded_heading_tolerance_rad").value
+                ),
+                dock_depth_m=float(
+                    self.get_parameter("unseeded_dock_depth_m").value
+                ),
+                bay_observation_standoff_m=float(
+                    self.get_parameter("unseeded_observation_standoff_m").value
+                ),
+            ),
+        )
+        if layout is None:
+            return None
+        dock_id = layout.entrances_left_to_right[0].dock_id or "field_search"
+        frame_id = str(self.get_parameter("required_ned_frame_id").value).strip()
+        coarse_payload = {
+            "dock_id": dock_id,
+            "center_ned": {
+                "north": layout.coarse_center_ned.north,
+                "east": layout.coarse_center_ned.east,
+                "down": layout.coarse_center_ned.down,
+            },
+            "timestamp": timestamp,
+            "valid": True,
+            "confidence": float(sum(
+                item.confidence for item in layout.entrances_left_to_right
+            ) / len(layout.entrances_left_to_right)),
+            "source": "mid360_task3_unseeded_multiframe",
+            "frame_id": frame_id,
+            "entrance_count": len(layout.entrances_left_to_right),
+            "entrance_heading_rad": layout.inward_heading_rad,
+            "bay_observation_poses": [
+                {
+                    "bay_id": item.bay_id,
+                    "north": item.observation_pose.x,
+                    "east": item.observation_pose.y,
+                    "heading_rad": item.observation_pose.yaw,
+                }
+                for item in layout.bays
+            ],
+        }
+        coarse_message = String()
+        coarse_message.data = json.dumps(
+            coarse_payload, separators=(",", ":"), sort_keys=True
+        )
+        self._coarse_pub.publish(coarse_message)
+        self.get_logger().warning(
+            "UNSEEDED DOCK CONFIRMED: %d entrances; coarse centre N=%.2f E=%.2f; "
+            "left-to-right hits=%s"
+            % (
+                len(layout.entrances_left_to_right),
+                layout.coarse_center_ned.north,
+                layout.coarse_center_ned.east,
+                layout.frame_hits,
+            )
+        )
+        return DockPerceptionResult(
+            dock_id=dock_id,
+            entrance_observations=layout.entrances_left_to_right,
+            timestamp=timestamp,
+            source="mid360_task3_unseeded_multiframe",
+            valid=True,
+        )
+
     def _on_cloud(self, message: Any) -> None:
         now = time.monotonic()
         period = float(self.get_parameter("process_period_s").value)
@@ -225,7 +344,13 @@ class Task3LidarPerceptionNode(Node):
             return
         self._last_process_time = now
         local_fallback = bool(self.get_parameter("enable_local_fallback").value)
-        if (self._coarse is None or self._pose is None) and not local_fallback:
+        detector_mode = str(
+            self.get_parameter("detector_mode").value
+        ).strip().lower()
+        unseeded_mode = detector_mode == "unseeded_lines"
+        if self._pose is None:
+            return
+        if self._coarse is None and not (local_fallback or unseeded_mode):
             return
         wall_time = time.time()
         coarse_timeout = float(self.get_parameter("coarse_timeout_s").value)
@@ -242,10 +367,42 @@ class Task3LidarPerceptionNode(Node):
                 points_base = pointcloud_message_to_base_link_xyz(message)
             timestamp = self._message_timestamp(message)
             result = None
-            if self._coarse is not None and self._pose is not None:
-                detector_mode = str(
-                    self.get_parameter("detector_mode").value
-                ).strip().lower()
+            if unseeded_mode:
+                debug = detect_local_entrances_debug(
+                    points_base,
+                    coarse_center_xy=None,
+                    config=self._local_detector_config,
+                )
+                diagnostic_period = float(
+                    self.get_parameter("diagnostic_log_period_s").value
+                )
+                if (
+                    diagnostic_period >= 0.0
+                    and now - self._last_diagnostic_log_time >= diagnostic_period
+                ):
+                    self._last_diagnostic_log_time = now
+                    self.get_logger().info(
+                        "Unseeded 360 detector: input=%d filtered=%d clusters=%d "
+                        "segments=%d candidates=%d stable_frames=%d"
+                        % (
+                            len(points_base),
+                            len(debug.filtered_xyz),
+                            len(debug.clusters),
+                            len(debug.segments),
+                            len(debug.candidates),
+                            len(self._unseeded_frames),
+                        )
+                    )
+                raw_result = self._local_candidates_to_result(
+                    debug.candidates,
+                    timestamp=timestamp,
+                    source="mid360_task3_unseeded_lines",
+                )
+                result = self._stabilize_unseeded_result(
+                    raw_result,
+                    timestamp=timestamp,
+                )
+            elif self._coarse is not None and self._pose is not None:
                 if detector_mode == "seeded_lines":
                     debug = detect_local_entrances_debug(
                         points_base,
@@ -299,13 +456,14 @@ class Task3LidarPerceptionNode(Node):
                     )
                 else:
                     raise ValueError(
-                        "detector_mode must be seeded_lines or legacy_numpy"
+                        "detector_mode must be seeded_lines, unseeded_lines, "
+                        "or legacy_numpy"
                     )
             # The field test can run before the UAV coarse centre is available.
             # Search in the measured base_link cloud and convert candidates with
             # the available heading/position when one exists.  This branch is
             # disabled by default and is intended for recognition bring-up only.
-            if local_fallback:
+            if local_fallback and not unseeded_mode:
                 # In explicit field-test mode the local detector is the
                 # authority.  Do not let a far-away candidate from the seeded
                 # prototype bypass the local coarse gate.

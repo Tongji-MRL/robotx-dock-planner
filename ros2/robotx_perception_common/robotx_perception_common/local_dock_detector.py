@@ -51,7 +51,7 @@ class LocalDockDetectorConfig:
     max_parallel_error_rad: float = 0.38
     max_wall_view_error_rad: float = 0.80
     max_front_view_error_rad: float = 0.45
-    max_endpoint_depth_offset_m: float = 1.25
+    max_endpoint_depth_offset_m: float = 2.0
     min_entrance_before_center_m: float = 0.25
     min_gap_m: float = 0.75
     max_gap_m: float = 4.0
@@ -300,8 +300,6 @@ def _candidate_side_pairs(
     view: Optional[np.ndarray],
 ) -> Tuple[LocalEntranceCandidate, ...]:
     observer = np.zeros(2, dtype=float)
-    if view is None:
-        view = np.asarray((1.0, 0.0), dtype=float)
     coarse_distance = float(np.linalg.norm(coarse)) if coarse is not None else config.max_range_m
     result: List[LocalEntranceCandidate] = []
     for first_index, first in enumerate(segments):
@@ -315,11 +313,22 @@ def _candidate_side_pairs(
                 second_direction = -second_direction
             wall_axis = first_direction + second_direction
             wall_axis /= max(float(np.linalg.norm(wall_axis)), 1e-9)
-            wall_view_error = math.acos(min(1.0, max(-1.0, abs(float(wall_axis @ view)))))
-            if wall_view_error > config.max_wall_view_error_rad:
-                continue
-            for endpoint_first in (first.start, first.end):
-                for endpoint_second in (second.start, second.end):
+            if coarse is None:
+                # Without a supplied centre the observer is on the water side.
+                # Only the nearer end of each parallel finger can be an
+                # entrance; pairing far ends creates a convincing but unsafe
+                # false opening at the dock back wall.
+                endpoint_pairs = ((
+                    min((first.start, first.end), key=lambda item: float(np.linalg.norm(item))),
+                    min((second.start, second.end), key=lambda item: float(np.linalg.norm(item))),
+                ),)
+            else:
+                endpoint_pairs = tuple(
+                    (endpoint_first, endpoint_second)
+                    for endpoint_first in (first.start, first.end)
+                    for endpoint_second in (second.start, second.end)
+                )
+            for endpoint_first, endpoint_second in endpoint_pairs:
                     gap_vector = endpoint_second - endpoint_first
                     gap = float(np.linalg.norm(gap_vector))
                     if not config.min_gap_m <= gap <= config.max_gap_m:
@@ -327,11 +336,23 @@ def _candidate_side_pairs(
                     gap_unit = gap_vector / gap
                     if abs(float(gap_unit @ wall_axis)) > math.sin(config.max_parallel_error_rad):
                         continue
-                    if abs(float(gap_vector @ view)) > config.max_endpoint_depth_offset_m:
-                        continue
                     center = (endpoint_first + endpoint_second) / 2.0
-                    forward = float(center @ view)
-                    cross = np.asarray((-view[1], view[0]), dtype=float)
+                    candidate_view = view
+                    if candidate_view is None:
+                        center_range = float(np.linalg.norm(center - observer))
+                        if center_range <= config.min_range_m:
+                            continue
+                        candidate_view = (center - observer) / center_range
+                    wall_view_error = math.acos(min(
+                        1.0,
+                        max(-1.0, abs(float(wall_axis @ candidate_view))),
+                    ))
+                    if wall_view_error > config.max_wall_view_error_rad:
+                        continue
+                    if abs(float(gap_vector @ candidate_view)) > config.max_endpoint_depth_offset_m:
+                        continue
+                    forward = float(center @ candidate_view)
+                    cross = np.asarray((-candidate_view[1], candidate_view[0]), dtype=float)
                     lateral = abs(float(center @ cross))
                     before_center = coarse_distance - forward
                     if forward < config.min_range_m:
@@ -353,7 +374,7 @@ def _candidate_side_pairs(
                     if approach_points > config.max_approach_points:
                         continue
                     heading_axis = wall_axis
-                    target = coarse - center if coarse is not None else view
+                    target = coarse - center if coarse is not None else candidate_view
                     if float(heading_axis @ target) < 0:
                         heading_axis = -heading_axis
                     support_score = min(1.0, min(first.support, second.support) / 24.0)
@@ -405,12 +426,8 @@ def _candidate_front_gaps(
     then appears as two nearly collinear lateral segments with an empty gap.
     """
 
-    if view is None:
-        return ()
     observer = np.zeros(2, dtype=float)
-    cross = np.asarray((-view[1], view[0]), dtype=float)
     coarse_distance = float(np.linalg.norm(coarse)) if coarse is not None else config.max_range_m
-    coarse_lateral = float(coarse @ cross) if coarse is not None else 0.0
     result: List[LocalEntranceCandidate] = []
     for first_index, first in enumerate(segments):
         for second in segments[first_index + 1:]:
@@ -423,15 +440,26 @@ def _candidate_front_gaps(
                 second_direction = -second_direction
             front_axis = first_direction + second_direction
             front_axis /= max(float(np.linalg.norm(front_axis)), 1e-9)
+            first_mid = (first.start + first.end) / 2.0
+            second_mid = (second.start + second.end) / 2.0
+            candidate_view = view
+            if candidate_view is None:
+                pair_center = (first_mid + second_mid) / 2.0
+                pair_range = float(np.linalg.norm(pair_center - observer))
+                if pair_range <= config.min_range_m:
+                    continue
+                candidate_view = (pair_center - observer) / pair_range
+            cross = np.asarray((-candidate_view[1], candidate_view[0]), dtype=float)
+            coarse_lateral = float(coarse @ cross) if coarse is not None else 0.0
             front_error = abs(
                 math.pi / 2.0
-                - math.acos(min(1.0, max(-1.0, abs(float(front_axis @ view)))))
+                - math.acos(min(
+                    1.0,
+                    max(-1.0, abs(float(front_axis @ candidate_view))),
+                ))
             )
             if front_error > config.max_front_view_error_rad:
                 continue
-
-            first_mid = (first.start + first.end) / 2.0
-            second_mid = (second.start + second.end) / 2.0
             first_side = float(first_mid @ cross) - coarse_lateral
             second_side = float(second_mid @ cross) - coarse_lateral
             if first_side * second_side >= 0.0:
@@ -450,13 +478,13 @@ def _candidate_front_gaps(
             gap = float(np.linalg.norm(gap_vector))
             if not config.min_gap_m <= gap <= config.max_gap_m:
                 continue
-            if abs(float(gap_vector @ view)) > config.max_endpoint_depth_offset_m:
+            if abs(float(gap_vector @ candidate_view)) > config.max_endpoint_depth_offset_m:
                 continue
             gap_unit = gap_vector / gap
-            if abs(float(gap_unit @ view)) > math.sin(config.max_parallel_error_rad):
+            if abs(float(gap_unit @ candidate_view)) > math.sin(config.max_parallel_error_rad):
                 continue
             center = (endpoint_first + endpoint_second) / 2.0
-            forward = float(center @ view)
+            forward = float(center @ candidate_view)
             lateral = abs(float(center @ cross) - coarse_lateral)
             before_center = coarse_distance - forward
             if forward < config.min_range_m:
@@ -497,7 +525,7 @@ def _candidate_front_gaps(
                 continue
             result.append(LocalEntranceCandidate(
                 float(center[0]), float(center[1]),
-                math.atan2(float(view[1]), float(view[0])),
+                math.atan2(float(candidate_view[1]), float(candidate_view[0])),
                 gap, float(min(1.0, max(0.0, confidence))),
             ))
     return tuple(result)

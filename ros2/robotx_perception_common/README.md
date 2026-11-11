@@ -128,6 +128,50 @@ The output is the existing Task3 JSON contract consumed by
 `usv_task3_executor`. The executor still requires its existing multi-frame
 stability check before it releases any target to control.
 
+## 无 UAV 粗中心搜索
+
+`unseeded_lines` 用于只有 USV、RTK 和 Mid-360 的方案。四个 geofence
+角点先转换到共用的 `robotx_rtk_ned`，规划器在两组对边中点之间生成两条向内
+缩进的搜索线，并按固定间距生成“停车观察”点。第一条线覆盖不足时再使用第二条。
+
+船停稳后，感知节点在 360° 点云中寻找三个平行入口。入口必须在至少 3 帧中重复
+出现，随后按面向 dock 时的左到右顺序编号为 1、2、3，并发布粗中心和三个 bay 的
+相机观察位姿。该模式仍只发布目标，不直接控制推进器。
+
+本地合成仿真会生成一个相对船体旋转 1.1 rad 的低矮三 bay dock、水面杂点和 RTK
+位姿，并把它送进正式感知节点：
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/robotx/robotx_ws/install/setup.bash
+ros2 launch robotx_perception_common task3_geofence_search_sim.launch.py
+```
+
+看到 `UNSEEDED DOCK CONFIRMED: 3 entrances` 即表示三入口、左右顺序和粗中心链路
+已经确认。仿真只验证搜索几何与感知接口，不包含实船动力学和避障控制。
+
+带 RViz 图形界面的版本：
+
+```bash
+ros2 launch robotx_perception_common task3_geofence_search_rviz.launch.py
+```
+
+界面中灰线是 geofence，青色和蓝色分别是主搜索线与备用搜索线，橙色箭头是
+USV，点云是合成 Mid-360 数据；稳定识别后会显示绿色入口及 Bay 1/2/3、黄色
+粗中心和橙色相机观察点。
+
+实船启动 Livox、MAVROS 和 RTK 位姿后，使用：
+
+```bash
+ros2 launch robotx_perception_common task3_lidar_perception.launch.py \
+  detector_mode:=unseeded_lines \
+  local_max_candidates:=6 \
+  local_max_range_m:=10.0 \
+  local_lateral_half_width_m:=12.0 \
+  unseeded_required_detections:=3 \
+  unseeded_min_entrances:=3
+```
+
 如果驱动切换为 Livox CustomMsg，可以显式选择：
 
 ```bash

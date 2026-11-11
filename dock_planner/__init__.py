@@ -111,6 +111,11 @@ from .fsm_contract import (
     safe_stop_ack_progress,
     validate_fsm_progress,
 )
+from .geofence_search import (
+    BayObservationTarget, GeofenceSearchConfig, GeofenceSearchPlan, SearchLine,
+    StableEntranceConfig, StableEntranceLayout, orient_entrance_from_observer,
+    plan_geofence_search, stabilize_entrance_layout,
+)
 
 __all__ = [
     "DockPlanner", "DockSpec", "PlannerConfig", "PlanResult", "PlanStatus", "Pose2D",
@@ -185,4 +190,8 @@ __all__ = [
     "correct_bay_to_fsm_progress", "docking_result_to_fsm_message",
     "sprayer_window_to_fsm_progress", "firefighting_result_to_fsm_message",
     "safe_stop_ack_progress", "validate_fsm_progress",
+    "BayObservationTarget", "GeofenceSearchConfig", "GeofenceSearchPlan",
+    "SearchLine", "StableEntranceConfig", "StableEntranceLayout",
+    "orient_entrance_from_observer", "plan_geofence_search",
+    "stabilize_entrance_layout",
 ]

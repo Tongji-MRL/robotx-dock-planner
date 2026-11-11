@@ -11,6 +11,51 @@ from ros2.robotx_perception_common.robotx_perception_common.local_dock_detector 
 
 
 class LocalDockDetectorTests(unittest.TestCase):
+    def test_unseeded_search_finds_three_rotated_bays_around_the_vessel(self):
+        rng = np.random.default_rng(2)
+        heading = 1.10
+        forward = np.array((math.cos(heading), math.sin(heading)))
+        cross = np.array((-forward[1], forward[0]))
+        parts = []
+        # Four parallel fingers define three entrances.  The complete dock is
+        # rotated away from base_link +x so this exercises the 360-degree
+        # unseeded path instead of the old forward-only fallback.
+        for offset in (-4.5, -1.5, 1.5, 4.5):
+            for z_m in (-0.20, 0.0, 0.20, 0.40):
+                depth = np.linspace(0.0, 6.0, 80)
+                keep = rng.random(len(depth)) > 0.08
+                xy = (
+                    forward[None, :] * (4.5 + depth[keep, None])
+                    + cross[None, :] * offset
+                )
+                parts.append(np.column_stack((
+                    xy + rng.normal(0.0, 0.015, xy.shape),
+                    np.full(keep.sum(), z_m) + rng.normal(0.0, 0.01, keep.sum()),
+                )))
+
+        candidates = detect_local_entrances(
+            np.vstack(parts),
+            config=LocalDockDetectorConfig(
+                max_range_m=12.0,
+                lateral_half_width_m=12.0,
+                min_gap_m=2.0,
+                max_gap_m=4.0,
+                cluster_distance_m=0.20,
+                max_candidates=12,
+            ),
+        )
+
+        self.assertEqual(len(candidates), 3)
+        expected = [forward * 4.5 + cross * offset for offset in (-3.0, 0.0, 3.0)]
+        for point in expected:
+            nearest = min(
+                candidates,
+                key=lambda item: math.hypot(item.center_x_m - point[0], item.center_y_m - point[1]),
+            )
+            self.assertAlmostEqual(nearest.center_x_m, point[0], delta=0.12)
+            self.assertAlmostEqual(nearest.center_y_m, point[1], delta=0.12)
+            self.assertAlmostEqual(nearest.heading_rad, heading, delta=0.08)
+
     def test_coarse_seed_selects_the_external_entrance(self):
         points = generate_synthetic_dock_point_cloud(
             SyntheticDockConfig(center_north_m=4.0, depth_m=6.0, opening_width_m=3.0)
