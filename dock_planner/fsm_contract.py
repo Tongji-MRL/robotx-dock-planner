@@ -194,6 +194,15 @@ def executor_state_to_fsm_progress(value: Mapping[str, Any]) -> dict[str, Any]:
     )
     if value.get("retry") is not None:
         report["retry"] = value["retry"]
+    if progress == FSM_TASK3_FINISH_PROGRESS:
+        bay_id = value.get("bay_id")
+        window_id = value.get("window_id")
+        if bay_id is not None and window_id is not None:
+            report.update({
+                "bay_id": bay_id,
+                "window_id": window_id,
+                "report": {"bay_id": bay_id, "window_id": window_id},
+            })
     return report
 
 

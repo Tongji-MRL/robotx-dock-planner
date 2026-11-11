@@ -84,6 +84,7 @@ class UsvOnlyTask3Config:
     max_retries_per_state: int = 2
     max_search_passes: int = 2
     bay_entry_depth_m: float = 1.0
+    fallback_window_id: int = 1
     geofence: GeofenceSearchConfig = field(default_factory=GeofenceSearchConfig)
     stable_entrances: StableEntranceConfig = field(default_factory=StableEntranceConfig)
     state_timeouts_s: Mapping[UsvOnlyTask3State, float] = field(
@@ -99,6 +100,8 @@ class UsvOnlyTask3Config:
             raise ValueError("retry limits must be nonnegative and search passes positive")
         if not math.isfinite(self.bay_entry_depth_m) or self.bay_entry_depth_m < 0:
             raise ValueError("bay_entry_depth_m must be finite and nonnegative")
+        if self.fallback_window_id not in (1, 2):
+            raise ValueError("fallback_window_id must be 1 or 2")
         for state, timeout in self.state_timeouts_s.items():
             if not isinstance(state, UsvOnlyTask3State) or not math.isfinite(timeout) or timeout <= 0:
                 raise ValueError("state timeouts must map states to positive finite seconds")
@@ -337,8 +340,7 @@ class UsvOnlyTask3FlowManager:
     def aiming_ready(self, *, gimbal_ready: bool, window_id: int | None, now: float) -> bool:
         if self.state is not UsvOnlyTask3State.AIM_WINDOW or not gimbal_ready:
             return False
-        if window_id in (1, 2):
-            self.window_id = window_id
+        self.window_id = window_id if window_id in (1, 2) else self.config.fallback_window_id
         self._enter(UsvOnlyTask3State.SPRAY_WATER, now)
         return True
 
@@ -349,8 +351,35 @@ class UsvOnlyTask3FlowManager:
 
     def result_reported(self, *, now: float) -> None:
         if self.state is not UsvOnlyTask3State.REPORT_RESULT:
-            raise RuntimeError("result ACK is only valid while reporting")
+            raise RuntimeError("result preparation is only valid while reporting")
         self._enter(UsvOnlyTask3State.EXIT_DOCK, now)
+
+    def progress_report(self) -> dict[str, object]:
+        """Return the unencoded progress JSON consumed by the main FSM."""
+
+        progress = (
+            "TASK3_FINISH"
+            if self.state is UsvOnlyTask3State.COMPLETE
+            else f"TASK3_{self.state.value}"
+        )
+        message: dict[str, object] = {
+            "vehicle": "usv",
+            "task": "TASK3",
+            "progress": progress,
+            "error": self.error,
+        }
+        if self.state is UsvOnlyTask3State.COMPLETE:
+            if self.bay_id not in (1, 2, 3) or self.window_id not in (1, 2):
+                raise RuntimeError("TASK3_FINISH requires valid bay_id and window_id")
+            message.update({
+                "bay_id": self.bay_id,
+                "window_id": self.window_id,
+                "report": {
+                    "bay_id": self.bay_id,
+                    "window_id": self.window_id,
+                },
+            })
+        return message
 
     def retry(self, *, now: float) -> bool:
         if self.state is not UsvOnlyTask3State.RETRY or self._retry_state is None:

@@ -33,7 +33,7 @@
 | `HOLD_POSITION` | 到 Bay 内停车点 | 停稳确认 | 20 s | `RETRY`，耗尽 `ERROR` |
 | `AIM_WINDOW` | 停稳 | 云台 ready | 90 s | `RETRY`，耗尽 `ERROR` |
 | `SPRAY_WATER` | 云台 ready | 喷水完成确认 | 90 s | `RETRY`，耗尽 `ERROR` |
-| `REPORT_RESULT` | 喷水完成 | 主状态机/通信层 ACK | 15 s | `RETRY`，耗尽 `ERROR` |
+| `REPORT_RESULT` | 喷水完成 | 整理最终 `bay_id/window_id` 后自动进入退出流程 | 15 s | ID 非法则 `ERROR` |
 | `EXIT_DOCK` | 结果 ACK | 控制器确认退出 | 120 s | `RETRY`，耗尽 `ERROR` |
 | `COMPLETE` | 退出完成 | 终态 | 无 | 发布 `TASK3_FINISH` |
 | `PAUSED` | RTK/frame/MAVROS/人工接管/主状态机暂停 | 健康恢复并 RESUME | 30 s | 恢复超时 `ERROR` |
@@ -59,7 +59,6 @@
 | `/robotx/task3/hold_confirmed` | Bool | Bay 内停车稳定 |
 | `/tongji_mrl/twave/task3/gimbal_ready` | String JSON | `ready`、可选 `window_id` 1/2 |
 | `/tongji_mrl/twave/task3/spray_complete` | Bool | 喷水完成 |
-| `/tongji_mrl/twave/task3/result_ack` | Bool | 主状态机已收结果 |
 
 四角点顺序不作假设。可直接输入 NED：
 
@@ -87,7 +86,7 @@ GPS 高度须与 RTK 原点采用相同的椭球高定义。
 
 | Topic | 类型 | 内容 |
 |---|---|---|
-| `/tongji_mrl/twave/task3/state` | String JSON | state/detail/error/bay_id/window_id/search 信息及完成标志 |
+| `/tongji_mrl/twave/progress` | String JSON | 主状态机需要的 `vehicle/task/progress/error`；完成时附带 report ID |
 | `/tongji_mrl/twave/task3/goto_preview` | String JSON | NED 高层目标预览 |
 | `/safe_passage/goto/target` | String JSON | 仅关闭 dry-run 且启用输出时发布 |
 | `/tongji_mrl/twave/task3/release_control` | Bool | true 时公共控制器须释放旧目标 |
@@ -98,14 +97,24 @@ GPS 高度须与 RTK 原点采用相同的椭球高定义。
 
 ## 明确的完成状态
 
-`REPORT_RESULT` 和 `EXIT_DOCK` 均不是任务完成。只有退出完成才发布：
+不使用状态位或二进制编码。运行中只向主状态机发布 progress。`REPORT_RESULT` 和
+`EXIT_DOCK` 均不是任务完成，只有退出完成才发布：
 
 ```json
-{"state":"COMPLETE","task_complete":true,"fsm_progress":"TASK3_FINISH"}
+{
+  "vehicle":"usv",
+  "task":"TASK3",
+  "progress":"TASK3_FINISH",
+  "error":null,
+  "bay_id":1,
+  "window_id":2,
+  "report":{"bay_id":1,"window_id":2}
+}
 ```
 
-现有 `executor_state_to_fsm_progress()` 会将 `COMPLETE` 映射为主状态机使用的
-`progress=TASK3_FINISH`。主状态机应以此判定整个 Task 3 完成。
+顶层 ID 用于兼容现有处理，`report` 是最终报告字段。主状态机应以
+`progress=TASK3_FINISH` 判定整个 Task 3 完成。窗口左右无法稳定判断时使用配置的合法
+fallback ID（默认 1），不会因此永久卡住。
 
 当前另一个 `FSM` 仓库的 `mission_planner_node.py` 仍同时等待 UAV 和 USV 两条
 `TASK3_FINISH`。在 USV-only 比赛配置中，主状态机还必须改为只等待 USV，或显式配置

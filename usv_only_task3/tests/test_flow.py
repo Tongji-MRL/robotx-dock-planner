@@ -83,10 +83,31 @@ class UsvOnlyFlowTests(unittest.TestCase):
         manager.navigation_reached(now=12.0)
         self.assertEqual(manager.state, UsvOnlyTask3State.COMPLETE)
         self.assertEqual(manager.status()["fsm_progress"], "TASK3_FINISH")
+        self.assertEqual(manager.progress_report(), {
+            "vehicle": "usv",
+            "task": "TASK3",
+            "progress": "TASK3_FINISH",
+            "error": None,
+            "bay_id": 1,
+            "window_id": 2,
+            "report": {"bay_id": 1, "window_id": 2},
+        })
         self.assertEqual(
             executor_state_to_fsm_progress(manager.status())["progress"],
             "TASK3_FINISH",
         )
+
+    def test_finish_uses_valid_window_fallback_without_encoding(self):
+        manager = self.make_manager()
+        manager.state = UsvOnlyTask3State.AIM_WINDOW
+        manager.bay_id = 3
+        self.assertTrue(manager.aiming_ready(gimbal_ready=True, window_id=None, now=1.0))
+        self.assertEqual(manager.window_id, 1)
+        manager.state = UsvOnlyTask3State.COMPLETE
+        progress = manager.progress_report()
+        self.assertNotIn("status_code", progress)
+        self.assertNotIn("status_bits", progress)
+        self.assertEqual(progress["report"], {"bay_id": 3, "window_id": 1})
 
     def test_primary_then_secondary_then_one_bounded_search_retry(self):
         manager = self.make_manager()

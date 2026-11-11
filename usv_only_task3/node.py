@@ -92,10 +92,9 @@ class UsvOnlyTask3Executor(Node):
         self.create_subscription(Bool, "/robotx/task3/hold_confirmed", self._on_hold, 10)
         self.create_subscription(String, "/tongji_mrl/twave/task3/gimbal_ready", self._on_gimbal, 10)
         self.create_subscription(Bool, "/tongji_mrl/twave/task3/spray_complete", self._on_spray, 10)
-        self.create_subscription(Bool, "/tongji_mrl/twave/task3/result_ack", self._on_result_ack, 10)
         self.create_subscription(Bool, "/tongji_mrl/twave/task3/dock_verified", self._on_dock_verified, 10)
 
-        self.state_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/state", 10)
+        self.progress_pub = self.create_publisher(String, "/tongji_mrl/twave/progress", 10)
         self.preview_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/goto_preview", 10)
         self.goto_pub = self.create_publisher(
             String, str(self.get_parameter("goto_target_topic").value), 10
@@ -288,13 +287,6 @@ class UsvOnlyTask3Executor(Node):
             except RuntimeError as exc:
                 self._warn("spray completion", exc)
 
-    def _on_result_ack(self, msg: Bool) -> None:
-        if msg.data:
-            try:
-                self.manager.result_reported(now=time.time())
-            except RuntimeError as exc:
-                self._warn("result ACK", exc)
-
     def _on_dock_verified(self, msg: Bool) -> None:
         if msg.data:
             try:
@@ -312,14 +304,22 @@ class UsvOnlyTask3Executor(Node):
             self.manager.retry(now=now)
         if self.manager.state is UsvOnlyTask3State.WAIT_INPUTS:
             self._try_begin(now)
+        if self.manager.state is UsvOnlyTask3State.REPORT_RESULT:
+            try:
+                self.manager.result_reported(now=now)
+            except RuntimeError as exc:
+                self.manager.fail(f"FINAL_REPORT_INVALID: {exc}", now)
         self._publish()
 
     def _publish(self) -> None:
         status = self.manager.status()
         state_key = json.dumps(status, sort_keys=True)
         if state_key != self._last_state:
-            msg = String(); msg.data = json.dumps(status, separators=(",", ":"))
-            self.state_pub.publish(msg)
+            progress = String()
+            progress.data = json.dumps(
+                self.manager.progress_report(), separators=(",", ":")
+            )
+            self.progress_pub.publish(progress)
             self._last_state = state_key
         release = Bool(); release.data = self.manager.releases_control
         self.release_pub.publish(release)

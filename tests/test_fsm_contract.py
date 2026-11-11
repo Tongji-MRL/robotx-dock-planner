@@ -82,6 +82,10 @@ class FsmContractTests(unittest.TestCase):
         finished = executor_state_to_fsm_progress({"state": "FINISHED"})
         self.assertEqual(finished["progress"], FSM_TASK3_FINISH_PROGRESS)
         self.assertIsNone(finished["error"])
+        finished_with_ids = executor_state_to_fsm_progress({
+            "state": "COMPLETE", "bay_id": 2, "window_id": 1,
+        })
+        self.assertEqual(finished_with_ids["report"], {"bay_id": 2, "window_id": 1})
 
     def test_wire_progress_rejects_packed_status_fields(self):
         with self.assertRaises(ValueError):
