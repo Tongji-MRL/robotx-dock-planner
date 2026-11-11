@@ -159,6 +159,7 @@ class UsvOnlyTask3FlowManager:
         self._search_pass = 1
         self._dock_frames: list[tuple[DockEntranceObservationNED, ...]] = []
         self._active_bay_index = 0
+        self._bay_observation_ready = False
         self.bay_id: int | None = None
         self.window_id: int | None = None
         self._resume_state: UsvOnlyTask3State | None = None
@@ -186,6 +187,17 @@ class UsvOnlyTask3FlowManager:
             UsvOnlyTask3State.RETRY, UsvOnlyTask3State.ERROR,
             UsvOnlyTask3State.ABORTED,
         }
+
+    @property
+    def dock_verification_ready(self) -> bool:
+        """Whether the current stable layout can advance without new frames."""
+
+        return (
+            self.state is UsvOnlyTask3State.VERIFY_DOCK
+            and self.layout is not None
+            and not self.navigation_hold_reason
+            and not self._needs_dock_revalidation
+        )
 
     @property
     def current_goal(self) -> Pose2D | None:
@@ -280,6 +292,11 @@ class UsvOnlyTask3FlowManager:
             self.detail = reason
             return False
         destination = self._resume_state or UsvOnlyTask3State.WAIT_INPUTS
+        if destination is UsvOnlyTask3State.SPRAY_WATER:
+            # PAUSE forces the outer adapter to stop both pump and gimbal.
+            # Re-aim before a resumed spray instead of restarting the pump
+            # against a potentially stale target.
+            destination = UsvOnlyTask3State.AIM_WINDOW
         self._resume_state = None
         self._enter(destination, now, "RESUMED")
         return True
@@ -300,6 +317,10 @@ class UsvOnlyTask3FlowManager:
             line = self.search_plan.lines[self._line_index]
             if self._station_index + 1 < len(line.stations):
                 self._station_index += 1
+                # Stability is meaningful only for consecutive frames captured
+                # from the same observation station.  Mixing viewpoints can make
+                # unrelated entrance candidates look stable.
+                self._dock_frames.clear()
                 self.state_entered_at = now
                 return
             if self._line_index == 0:
@@ -323,9 +344,13 @@ class UsvOnlyTask3FlowManager:
                 self._revalidation_at_observation = True
                 self._enter(UsvOnlyTask3State.VERIFY_DOCK, now)
             else:
+                self._bay_observation_ready = True
                 self._enter(UsvOnlyTask3State.INSPECT_BAYS, now)
             return
         if self.state is UsvOnlyTask3State.INSPECT_BAYS:
+            # This is the completion of a move between Bay observation poses.
+            self._bay_observation_ready = True
+            self.state_entered_at = now
             return
         if self.state is UsvOnlyTask3State.ENTER_BAY:
             self._enter(UsvOnlyTask3State.HOLD_POSITION, now)
@@ -387,6 +412,8 @@ class UsvOnlyTask3FlowManager:
             raise RuntimeError("no stable dock layout is ready for verification")
         destination = (UsvOnlyTask3State.INSPECT_BAYS if self._revalidation_at_observation
                        else UsvOnlyTask3State.APPROACH_DOCK)
+        if destination is UsvOnlyTask3State.INSPECT_BAYS:
+            self._bay_observation_ready = True
         self._revalidation_at_observation = False
         self._enter(destination, now)
 
@@ -395,14 +422,18 @@ class UsvOnlyTask3FlowManager:
             return False
         if self.state is not UsvOnlyTask3State.INSPECT_BAYS or self.layout is None:
             return False
+        if not self._bay_observation_ready:
+            return False
         if not math.isfinite(confidence) or confidence < 0.5:
             return False
         if color.strip().upper() == "GREEN":
             self.bay_id = self.layout.bays[self._active_bay_index].bay_id
+            self._bay_observation_ready = False
             self._enter(UsvOnlyTask3State.ENTER_BAY, now)
             return True
         if self._active_bay_index + 1 < len(self.layout.bays):
             self._active_bay_index += 1
+            self._bay_observation_ready = False
             self.state_entered_at = now
             return False
         self._retry_or_fail(UsvOnlyTask3State.INSPECT_BAYS, "SAFE_BAY_NOT_CONFIRMED", now)
@@ -440,37 +471,32 @@ class UsvOnlyTask3FlowManager:
         self._enter(UsvOnlyTask3State.EXIT_DOCK, now)
 
     def progress_report(self) -> dict[str, object]:
-        """Return the unencoded progress JSON consumed by the main FSM."""
+        """Return only the progress envelope consumed by the main FSM.
+
+        Docking and firefighting IDs are emitted separately on the result topic;
+        progress remains a small state message throughout the task.
+        """
 
         progress = (
             "TASK3_FINISH"
             if self.state is UsvOnlyTask3State.COMPLETE
             else f"TASK3_{self.state.value}"
         )
-        message: dict[str, object] = {
+        return {
             "vehicle": "usv",
             "task": "TASK3",
             "progress": progress,
             "error": self.error,
         }
-        if self.state is UsvOnlyTask3State.COMPLETE:
-            if self.bay_id not in (1, 2, 3) or self.window_id not in (1, 2):
-                raise RuntimeError("TASK3_FINISH requires valid bay_id and window_id")
-            message.update({
-                "bay_id": self.bay_id,
-                "window_id": self.window_id,
-                "report": {
-                    "bay_id": self.bay_id,
-                    "window_id": self.window_id,
-                },
-            })
-        return message
 
     def retry(self, *, now: float) -> bool:
         if self.state is not UsvOnlyTask3State.RETRY or self._retry_state is None:
             return False
         destination = self._retry_state
         self._retry_state = None
+        if destination is UsvOnlyTask3State.INSPECT_BAYS:
+            self._active_bay_index = 0
+            self._bay_observation_ready = False
         self._enter(destination, now, "RETRY_STARTED")
         return True
 
@@ -502,7 +528,11 @@ class UsvOnlyTask3FlowManager:
         if attempt > self.config.max_retries_per_state:
             self.fail(f"{reason}: retry limit exhausted", now)
             return
-        self._retry_state = failed_state
+        self._retry_state = (
+            UsvOnlyTask3State.AIM_WINDOW
+            if failed_state is UsvOnlyTask3State.SPRAY_WATER
+            else failed_state
+        )
         self._enter(UsvOnlyTask3State.RETRY, now, reason)
 
     def tick(self, *, now: float) -> None:
@@ -681,6 +711,7 @@ class UsvOnlyTask3FlowManager:
             "search_pass": self._search_pass,
             "search_line": self._line_index + 1,
             "station_index": self._station_index,
+            "bay_observation_ready": self._bay_observation_ready,
             "release_control": self.releases_control,
             "task_complete": self.state is UsvOnlyTask3State.COMPLETE,
             "fsm_progress": "TASK3_FINISH" if self.state is UsvOnlyTask3State.COMPLETE else f"TASK3_{self.state.value}",

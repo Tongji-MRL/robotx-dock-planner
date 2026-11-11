@@ -88,9 +88,6 @@ class UsvOnlyFlowTests(unittest.TestCase):
             "task": "TASK3",
             "progress": "TASK3_FINISH",
             "error": None,
-            "bay_id": 1,
-            "window_id": 2,
-            "report": {"bay_id": 1, "window_id": 2},
         })
         self.assertEqual(
             executor_state_to_fsm_progress(manager.status())["progress"],
@@ -107,7 +104,45 @@ class UsvOnlyFlowTests(unittest.TestCase):
         progress = manager.progress_report()
         self.assertNotIn("status_code", progress)
         self.assertNotIn("status_bits", progress)
-        self.assertEqual(progress["report"], {"bay_id": 3, "window_id": 1})
+        self.assertNotIn("report", progress)
+        self.assertNotIn("bay_id", progress)
+        self.assertNotIn("window_id", progress)
+
+    def test_bay_color_is_ignored_until_each_observation_pose_is_reached(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager.navigation_reached(now=1.0)
+        manager.accept_dock_frame(self.stable_frame(1.0), Pose2D(0, 5, 0), now=1.0)
+        manager.accept_dock_frame(self.stable_frame(2.0), Pose2D(0, 5, 0), now=2.0)
+        manager.dock_verified(now=3.0)
+        manager.navigation_reached(now=4.0)
+
+        # First observation pose was reached by APPROACH_DOCK completion.
+        self.assertTrue(manager.status()["bay_observation_ready"])
+        self.assertFalse(manager.accept_bay_color("RED", 0.9, now=5.0))
+        self.assertFalse(manager.status()["bay_observation_ready"])
+
+        # A result received while moving to Bay 2 must not be accepted.
+        self.assertFalse(manager.accept_bay_color("GREEN", 0.9, now=5.5))
+        self.assertIsNone(manager.bay_id)
+        manager.navigation_reached(now=6.0)
+        self.assertTrue(manager.accept_bay_color("GREEN", 0.9, now=6.1))
+        self.assertEqual(manager.bay_id, 2)
+
+    def test_dock_stability_does_not_mix_frames_between_search_stations(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager.navigation_reached(now=1.0)
+        self.assertFalse(manager.accept_dock_frame(
+            self.stable_frame(1.0), Pose2D(0, 5, 0), now=1.0
+        ))
+        manager.navigation_reached(now=2.0)
+        self.assertFalse(manager.accept_dock_frame(
+            self.stable_frame(2.0), Pose2D(0, 5, 0), now=2.0
+        ))
+        self.assertTrue(manager.accept_dock_frame(
+            self.stable_frame(3.0), Pose2D(0, 5, 0), now=3.0
+        ))
 
     def test_primary_then_secondary_then_one_bounded_search_retry(self):
         manager = self.make_manager()
@@ -159,6 +194,26 @@ class UsvOnlyFlowTests(unittest.TestCase):
         manager.update_health(health(6.0), Pose2D(2, 2, 0), now=6.0)
         self.assertTrue(manager.resume(now=6.0))
         self.assertEqual(manager.state, UsvOnlyTask3State.TRANSIT_TO_SEARCH)
+
+    def test_paused_or_timed_out_spray_must_reaim_before_restarting_pump(self):
+        timeouts = {
+            UsvOnlyTask3State.SPRAY_WATER: 1.0,
+            UsvOnlyTask3State.RETRY: 1.0,
+        }
+        manager = self.make_manager(state_timeouts_s=timeouts)
+        manager.state = UsvOnlyTask3State.SPRAY_WATER
+        manager.state_entered_at = 0.0
+        manager.health = health(1.1)
+        manager.tick(now=1.1)
+        self.assertEqual(manager.state, UsvOnlyTask3State.RETRY)
+        manager.retry(now=1.2)
+        self.assertEqual(manager.state, UsvOnlyTask3State.AIM_WINDOW)
+
+        manager.state = UsvOnlyTask3State.SPRAY_WATER
+        manager.pause("OPERATOR_PAUSE", now=2.0)
+        manager.health = health(2.1)
+        self.assertTrue(manager.resume(now=2.1))
+        self.assertEqual(manager.state, UsvOnlyTask3State.AIM_WINDOW)
 
     def test_frame_mismatch_never_releases_first_goal(self):
         manager = self.make_manager()

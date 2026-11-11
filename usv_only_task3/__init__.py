@@ -6,10 +6,12 @@ from .flow import (
     UsvOnlyTask3FlowManager,
     UsvOnlyTask3State,
 )
+from .reports import Task3ResultFactory
 
 __all__ = [
     "UsvHealth",
     "UsvOnlyTask3Config",
     "UsvOnlyTask3FlowManager",
     "UsvOnlyTask3State",
+    "Task3ResultFactory",
 ]

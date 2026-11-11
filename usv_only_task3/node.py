@@ -35,6 +35,7 @@ from usv_only_task3.flow import (
     UsvOnlyTask3FlowManager,
     UsvOnlyTask3State,
 )
+from usv_only_task3.reports import Task3ResultFactory
 
 
 def _object(raw: str) -> dict:
@@ -61,11 +62,27 @@ class UsvOnlyTask3Executor(Node):
         self.declare_parameter("max_search_passes", 2)
         self.declare_parameter("keep_out_detour_margin_m", 0.5)
         self.declare_parameter("keep_out_arc_spacing_m", 1.0)
+        self.declare_parameter("auto_verify_stable_dock", True)
+        self.declare_parameter("enable_aux_output", False)
+        self.declare_parameter("team_id", "TONG")
+        self.declare_parameter("vehicle_id", "usv")
+        self.declare_parameter("report_seq_start", 0)
         self.declare_parameter("goto_target_topic", "/safe_passage/goto/target")
         self.declare_parameter("goto_status_topic", "/safe_passage/goto/status")
+        self.declare_parameter("goto_cancel_topic", "/safe_passage/goto/cancel")
+        self.declare_parameter(
+            "gimbal_request_topic", "/tongji_mrl/twave/task3/gimbal_request"
+        )
+        self.declare_parameter(
+            "spray_request_topic", "/tongji_mrl/twave/task3/spray_request"
+        )
 
         self.dry_run = bool(self.get_parameter("dry_run").value)
         self.enable_goto_output = bool(self.get_parameter("enable_goto_output").value)
+        self.enable_aux_output = bool(self.get_parameter("enable_aux_output").value)
+        self.auto_verify_stable_dock = bool(
+            self.get_parameter("auto_verify_stable_dock").value
+        )
         self.manager = UsvOnlyTask3FlowManager(UsvOnlyTask3Config(
             required_frame_id=str(self.get_parameter("required_ned_frame_id").value),
             pose_timeout_s=float(self.get_parameter("pose_timeout_s").value),
@@ -84,6 +101,17 @@ class UsvOnlyTask3Executor(Node):
         self._last_state = None
         self._last_goal = None
         self._goal_running = False
+        self._navigation_active = False
+        self._navigation_cancel_pending = False
+        self._pump_started = False
+        self._gimbal_active = False
+        self._docking_reported = False
+        self._firefighting_reported = False
+        self._result_factory = Task3ResultFactory(
+            team_id=str(self.get_parameter("team_id").value),
+            vehicle_id=str(self.get_parameter("vehicle_id").value),
+            initial_seq=int(self.get_parameter("report_seq_start").value),
+        )
 
         self.create_subscription(String, "/tongji_mrl/twave/task_cmd", self._on_command, 10)
         self.create_subscription(String, "/tongji_mrl/twave/task3/navigation_constraint",
@@ -108,9 +136,22 @@ class UsvOnlyTask3Executor(Node):
         self.state_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/state", 10)
         self.checkpoint_pub = self.create_publisher(String, "/tongji_mrl/twave/checkpoint", 10)
         self.progress_pub = self.create_publisher(String, "/tongji_mrl/twave/progress", 10)
+        self.result_pub = self.create_publisher(String, "/tongji_mrl/twave/result", 10)
         self.preview_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/goto_preview", 10)
         self.goto_pub = self.create_publisher(
             String, str(self.get_parameter("goto_target_topic").value), 10
+        )
+        self.goto_cancel_pub = self.create_publisher(
+            Bool, str(self.get_parameter("goto_cancel_topic").value), 10
+        )
+        self.action_preview_pub = self.create_publisher(
+            String, "/tongji_mrl/twave/task3/action_preview", 10
+        )
+        self.gimbal_request_pub = self.create_publisher(
+            String, str(self.get_parameter("gimbal_request_topic").value), 10
+        )
+        self.spray_request_pub = self.create_publisher(
+            String, str(self.get_parameter("spray_request_topic").value), 10
         )
         self.release_pub = self.create_publisher(Bool, "/tongji_mrl/twave/task3/release_control", 10)
         self.mode_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/perception_mode", 10)
@@ -150,6 +191,8 @@ class UsvOnlyTask3Executor(Node):
             if command in {"START", "BEGIN", "START_TASK3", "TASK3_BEGIN"}:
                 if self.manager.state not in {UsvOnlyTask3State.IDLE, UsvOnlyTask3State.COMPLETE}:
                     raise ValueError("active mission requires RESUME or explicit RESET")
+                self._docking_reported = False
+                self._firefighting_reported = False
                 self.manager.start(now)
                 self._try_begin(now)
             elif command in {"PAUSE", "PAUSE_TASK3"}:
@@ -170,6 +213,8 @@ class UsvOnlyTask3Executor(Node):
                 self.manager._enter(UsvOnlyTask3State.IDLE, now)
                 self._last_goal = None
                 self._goal_running = False
+                self._docking_reported = False
+                self._firefighting_reported = False
             else:
                 raise ValueError(f"unsupported command {command!r}")
             self._publish()
@@ -311,17 +356,27 @@ class UsvOnlyTask3Executor(Node):
 
     def _on_goto(self, msg: String) -> None:
         try:
+            status = parse_goto_status(msg.data)
+            if status.kind.value == "ABORTED" and self._navigation_cancel_pending:
+                self._navigation_active = False
+                self._navigation_cancel_pending = False
+                return
             if self.manager.releases_control or self._last_goal is None:
                 return
-            status = parse_goto_status(msg.data)
             if status.kind.value == "RUNNING":
                 self._goal_running = True
             if status.kind.value == "DONE" and self._goal_running:
                 self._goal_running = False
                 self._last_goal = None
+                self._navigation_active = False
+                self._navigation_cancel_pending = False
                 self.manager.navigation_reached(now=time.time())
             elif status.kind.value == "ABORTED":
-                self.manager.pause(f"GOTO_ABORTED:{status.reason}", now=time.time())
+                self._navigation_active = False
+                if self._navigation_cancel_pending:
+                    self._navigation_cancel_pending = False
+                else:
+                    self.manager.pause(f"GOTO_ABORTED:{status.reason}", now=time.time())
         except (TypeError, ValueError, RuntimeError) as exc:
             self._warn("goto status", exc)
 
@@ -339,27 +394,47 @@ class UsvOnlyTask3Executor(Node):
     def _on_hold(self, msg: Bool) -> None:
         if msg.data:
             try:
-                self.manager.hold_confirmed(now=time.time())
+                now = time.time()
+                self.manager.hold_confirmed(now=now)
+                if not self._docking_reported:
+                    self._publish_result(self._result_factory.docking(
+                        self.manager.bay_id, now=now
+                    ))
+                    self._docking_reported = True
+                self._publish()
             except RuntimeError as exc:
                 self._warn("hold confirmation", exc)
+            except ValueError as exc:
+                self.manager.fail(f"DOCKING_REPORT_INVALID: {exc}", time.time())
 
     def _on_gimbal(self, msg: String) -> None:
         try:
             value = _object(msg.data)
-            self.manager.aiming_ready(
+            changed = self.manager.aiming_ready(
                 gimbal_ready=bool(value.get("ready", False)),
                 window_id=value.get("window_id"),
                 now=time.time(),
             )
+            if changed:
+                self._publish()
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             self._warn("gimbal status", exc)
 
     def _on_spray(self, msg: Bool) -> None:
         if msg.data:
             try:
-                self.manager.spray_complete(now=time.time())
+                now = time.time()
+                self.manager.spray_complete(now=now)
+                if not self._firefighting_reported:
+                    self._publish_result(self._result_factory.firefighting(
+                        self.manager.window_id, now=now
+                    ))
+                    self._firefighting_reported = True
+                self._publish()
             except RuntimeError as exc:
                 self._warn("spray completion", exc)
+            except ValueError as exc:
+                self.manager.fail(f"FIREFIGHTING_REPORT_INVALID: {exc}", time.time())
 
     def _on_dock_verified(self, msg: Bool) -> None:
         if msg.data:
@@ -372,6 +447,14 @@ class UsvOnlyTask3Executor(Node):
         now = time.time()
         self.manager.tick(now=now)
         if (
+            self.auto_verify_stable_dock
+            and self.manager.dock_verification_ready
+        ):
+            try:
+                self.manager.dock_verified(now=now)
+            except RuntimeError as exc:
+                self.manager.fail(f"DOCK_LAYOUT_VERIFICATION_FAILED: {exc}", now)
+        if (
             self.manager.state is UsvOnlyTask3State.RETRY
             and now - self.manager.state_entered_at >= 0.5
         ):
@@ -379,11 +462,54 @@ class UsvOnlyTask3Executor(Node):
         if self.manager.state is UsvOnlyTask3State.WAIT_INPUTS:
             self._try_begin(now)
         if self.manager.state is UsvOnlyTask3State.REPORT_RESULT:
-            try:
-                self.manager.result_reported(now=now)
-            except RuntimeError as exc:
-                self.manager.fail(f"FINAL_REPORT_INVALID: {exc}", now)
+            if not self._firefighting_reported:
+                self.manager.fail("FIREFIGHTING_REPORT_NOT_PUBLISHED", now)
+            else:
+                try:
+                    self.manager.result_reported(now=now)
+                except RuntimeError as exc:
+                    self.manager.fail(f"FINAL_REPORT_INVALID: {exc}", now)
         self._publish()
+
+    def _publish_result(self, value: dict) -> None:
+        message = String()
+        message.data = json.dumps(value, separators=(",", ":"))
+        self.result_pub.publish(message)
+
+    def _publish_action(self, publisher, payload: dict) -> None:
+        preview = String()
+        preview.data = json.dumps(payload, separators=(",", ":"))
+        self.action_preview_pub.publish(preview)
+        if self.dry_run or not self.enable_aux_output:
+            return
+        message = String()
+        message.data = preview.data
+        publisher.publish(message)
+
+    def _publish_auxiliary_actions(self) -> None:
+        state = self.manager.state
+        if state is UsvOnlyTask3State.AIM_WINDOW and not self._gimbal_active:
+            self._publish_action(self.gimbal_request_pub, {
+                "action": "AIM_WINDOW",
+                "bay_id": self.manager.bay_id,
+            })
+            self._gimbal_active = True
+        if state is UsvOnlyTask3State.SPRAY_WATER and not self._pump_started:
+            self._publish_action(self.spray_request_pub, {
+                "action": "START",
+                "bay_id": self.manager.bay_id,
+                "window_id": self.manager.window_id,
+            })
+            self._pump_started = True
+        if state is not UsvOnlyTask3State.SPRAY_WATER and self._pump_started:
+            self._publish_action(self.spray_request_pub, {"action": "STOP"})
+            self._pump_started = False
+        if state not in {
+            UsvOnlyTask3State.AIM_WINDOW,
+            UsvOnlyTask3State.SPRAY_WATER,
+        } and self._gimbal_active:
+            self._publish_action(self.gimbal_request_pub, {"action": "STOP"})
+            self._gimbal_active = False
 
     def _publish(self) -> None:
         if self.manager.current_goal is not None:
@@ -410,8 +536,14 @@ class UsvOnlyTask3Executor(Node):
             UsvOnlyTask3State.SEARCH_PRIMARY, UsvOnlyTask3State.SEARCH_SECONDARY
         } else "TRACK"
         self.mode_pub.publish(mode)
+        self._publish_auxiliary_actions()
         goal = self.manager.current_goal
         goal_key = None if goal is None else (goal.x, goal.y, goal.yaw, self.manager.state.value)
+        if goal is None and self._navigation_active and not self._navigation_cancel_pending:
+            cancel = Bool(); cancel.data = True
+            self.goto_cancel_pub.publish(cancel)
+            self._navigation_cancel_pending = True
+            self._navigation_active = False
         if goal_key == self._last_goal:
             return
         self._last_goal = goal_key
@@ -435,6 +567,8 @@ class UsvOnlyTask3Executor(Node):
         self.preview_pub.publish(msg)
         if not self.dry_run and self.enable_goto_output:
             self.goto_pub.publish(msg)
+            self._navigation_active = True
+            self._navigation_cancel_pending = False
 
 
 def main(args=None) -> None:
