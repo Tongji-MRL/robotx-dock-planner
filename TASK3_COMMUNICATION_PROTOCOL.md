@@ -64,13 +64,13 @@ V TT PPPP EEEE CCC
 | `1100` | `COLOR_SEQUENCE` | 识别/上报资源色和目标圆色 |
 | `1101` | `WAIT_UAV_DELIVERY` | 等待 UAV 接收、抓取和投放 |
 | `1110` | `EXIT_RETURN` | 退出 dock 并返航 |
-| `1111` | `COMPLETE` | Task3 权威完成结果已产生；对外 FSM progress 必须为 `TASK3_FINISH` |
+| `1111` | `FINISHED` | Task3 权威完成结果已产生；对外 FSM progress 必须为 `FINISHED` |
 
 内部 14 位编码的最终步骤名称是 `COMPLETE`，但发送给 FSM 主规划器的 JSON 状态不能使用
 `TASK3_COMPLETE`。USV 和 UAV 完成 Task3 后都必须发送：
 
 ```json
-{"vehicle":"usv","task":"TASK3","progress":"TASK3_FINISH","error":null}
+{"vehicle":"usv","task":"TASK3","progress":"FINISHED","error":null}
 ```
 
 ## 5. 通用 error
@@ -394,7 +394,7 @@ V TT PPPP EEEE CCC
 | `TASK3_RESUME_ACK` | `001` | saved_step、resume_step、resume_policy |
 | `TASK3_END_ACK` | `001` | 已安全停机、是否需要返航 |
 | `TASK3_COLOR_SEQUENCE` | `000` | resource_color、destination_color、confidence、valid |
-| `TASK3_FINISH` | `100` | bay/window/颜色/UAV 结果；对外完成 progress |
+| `FINISHED` | `100` | bay/window/颜色/UAV 结果；对外完成 progress |
 | `TASK3_FAILED` | `101` | 最终错误、detail、checkpoint |
 
 ## 10. Task4 抢占后的 Task3 恢复规则

@@ -95,19 +95,20 @@ Task3 只做一致性检查，不再执行 UAV 局部原点到 USV 局部原点�
 重试的问题仍会立即进入 `ERROR`。默认值可通过 executor 参数
 `retry_max_attempts`（3）和 `retry_operation_timeout_s`（30 秒）调整。
 
-Task3 完成时，内部状态 `FINISHED`/`COMPLETE` 统一转换为 FSM 要求的：
+Task3 完成时，子状态机和 FSM 接口统一使用 `FINISHED`。转换层仍兼容旧代码输入的
+`COMPLETE`，但不会再向外发布该名称：
 
 ```json
 {
   "vehicle": "usv",
   "task": "TASK3",
-  "progress": "TASK3_FINISH",
+  "progress": "FINISHED",
   "error": null
 }
 ```
 
 不能把 `TASK3_COMPLETE` 当作对外完成状态；`TASK3_COMPLETE` 仅可作为内部结构化报告名。
-FSM 只有在 UAV 和 USV 都收到 `TASK3_FINISH` 且 `error` 为 `null` 时，才会把总状态推进到
+FSM 只有在 UAV 和 USV 都收到 `FINISHED` 且 `error` 为 `null` 时，才会把总状态推进到
 `COMPLETE`。
 
 14 位状态码仍可保留在 Task3 内部日志和错误目录中，但不能出现在发送给 FSM 的 JSON。
@@ -295,7 +296,7 @@ Task4 使用：
 ```
 
 总规划器发送 `command="end"` 时，Task3 adapter 将其转换为 `SAFE_STOP`，并回传
-`TASK3_END_ACK`。这不是 `TASK3_FINISH`：子状态机需要先取消当前导航、关闭水泵、停止云台，
+`TASK3_END_ACK`。这不是 `FINISHED`：子状态机需要先取消当前导航、关闭水泵、停止云台，
 再由导航/控制模块执行返航；如果返航失败，才上报最终错误供总规划器判断是否需要外部救援。
 
 Task3 的 `begin`、`resume`、`end` 分别映射到内部的开始、恢复和安全停止命令。首次有效

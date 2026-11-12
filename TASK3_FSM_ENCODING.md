@@ -24,7 +24,7 @@ FSM 主规划器不解析 14 位整数、`status_bits` 或错误二进制表。U
 |---|---|
 | `vehicle` | `uav` 或 `usv` |
 | `task` | `MAP`、`TASK1`、`TASK3`、`TASK4` |
-| `progress` | 本表中的字符串；完成必须为 `TASK3_FINISH` |
+| `progress` | 本表中的字符串；完成必须为 `FINISHED` |
 | `error` | 正常为 `null`；最终失败为可读字符串 |
 
 普通进度上报不需要 `command`。`command` 只出现在主规划器发给车辆的
@@ -49,12 +49,12 @@ FSM 主规划器不解析 14 位整数、`status_bits` 或错误二进制表。U
 | `TASK3_COLOR_SEQUENCE` | 识别并上报颜色序列 |
 | `TASK3_WAIT_UAV_DELIVERY` | 等待 UAV 接收/投放 |
 | `TASK3_EXIT_RETURN` | 退出 dock 并返航 |
-| `TASK3_FINISH` | Task3 完成；FSM 以此推进总状态 |
+| `FINISHED` | Task3 完成；FSM 以此推进总状态 |
 | `TASK3_ERROR` | Task3 最终失败，`error` 必须非空 |
 
 `TASK3_BAY_CONFIRMED`、`TASK3_DOCKING_RESULT`、`TASK3_SPRAYER_WINDOW` 和
 `TASK3_FIREFIGHTING_RESULT` 是结果/事件进度，可携带结构化字段，但不会代替
-`TASK3_FINISH`。
+`FINISHED`。
 
 ## 3. 错误处理
 

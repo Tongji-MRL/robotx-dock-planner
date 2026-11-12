@@ -1,7 +1,7 @@
 import unittest
 
 from dock_planner.fsm_contract import (
-    FSM_TASK3_FINISH_PROGRESS,
+    FSM_TASK3_FINISHED_PROGRESS,
     correct_bay_to_fsm_progress,
     docking_result_to_fsm_message,
     executor_state_to_fsm_progress,
@@ -80,7 +80,7 @@ class FsmContractTests(unittest.TestCase):
         self.assertIsNone(retrying["error"])
         self.assertEqual(retrying["retry"]["attempt"], 2)
         finished = executor_state_to_fsm_progress({"state": "FINISHED"})
-        self.assertEqual(finished["progress"], FSM_TASK3_FINISH_PROGRESS)
+        self.assertEqual(finished["progress"], FSM_TASK3_FINISHED_PROGRESS)
         self.assertIsNone(finished["error"])
         finished_with_ids = executor_state_to_fsm_progress({
             "state": "COMPLETE", "bay_id": 2, "window_id": 1,

@@ -206,7 +206,7 @@ class UsvOnlyTask3Executor(Node):
                 return
             command = str(value.get("command", value.get("type", ""))).upper()
             if command in {"START", "BEGIN", "START_TASK3", "TASK3_BEGIN"}:
-                if self.manager.state not in {UsvOnlyTask3State.IDLE, UsvOnlyTask3State.COMPLETE}:
+                if self.manager.state not in {UsvOnlyTask3State.IDLE, UsvOnlyTask3State.FINISHED}:
                     raise ValueError("active mission requires RESUME or explicit RESET")
                 self._docking_reported = False
                 self._firefighting_reported = False

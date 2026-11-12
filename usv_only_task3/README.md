@@ -10,7 +10,7 @@
 | Dock 确认 | 单个可用入口可进入颜色判断 | 三个入口必须通过多帧稳定确认 |
 | Bay 编号 | 依观测顺序尝试 | 船面对 Dock 时从左到右固定为 1、2、3 |
 | Bay 判断 | 当前入口直接看颜色 | 逐个驶到 Bay 观察位确认绿色 Bay |
-| 任务结束 | `FINISHED` | 独立 `COMPLETE`，随后上报 `TASK3_FINISH` |
+| 任务结束 | `FINISHED` | 最终状态和上报值均为 `FINISHED` |
 
 保留 `geofence_search`、`DockPlanner`、三入口稳定器、视觉 Bay/窗口结果、
 `safe_passage` 航点反馈、避障仲裁和现有 FSM progress 转换。旧
@@ -35,7 +35,7 @@
 | `SPRAY_WATER` | 云台 ready | 喷水完成确认 | 90 s | `RETRY`，耗尽 `ERROR` |
 | `REPORT_RESULT` | 喷水完成 | 整理最终 `bay_id/window_id` 后自动进入退出流程 | 15 s | ID 非法则 `ERROR` |
 | `EXIT_DOCK` | 结果 ACK | 控制器确认退出 | 120 s | `RETRY`，耗尽 `ERROR` |
-| `COMPLETE` | 退出完成 | 终态 | 无 | 发布 `TASK3_FINISH` |
+| `FINISHED` | 退出完成 | 终态 | 无 | 发布 `FINISHED` |
 | `PAUSED` | RTK/frame/MAVROS/人工接管/主状态机暂停 | 健康恢复并 RESUME | 30 s | 恢复超时 `ERROR` |
 | `RETRY` | 可恢复失败 | 重新发起该状态 | 10 s | 次数耗尽 `ERROR` |
 | `ERROR` | 重试耗尽/不可恢复错误 | RESET | 终态 | 无 |
@@ -110,7 +110,7 @@ GPS 高度须与 RTK 原点采用相同的椭球高定义。
 {
   "vehicle":"usv",
   "task":"TASK3",
-  "progress":"TASK3_FINISH",
+  "progress":"FINISHED",
   "error":null
 }
 ```
@@ -130,12 +130,12 @@ Bay 内停车稳定后另行发布：
 ```
 
 每条 result 只含一种报告主体。主状态机应转发 result，并以
-`progress=TASK3_FINISH` 判定整个 Task 3 完成。窗口左右无法稳定判断时使用配置的合法
+`progress=FINISHED` 判定整个 Task 3 完成。窗口左右无法稳定判断时使用配置的合法
 fallback ID（默认 1），不会因此永久卡住。`report_seq_start` 用于与整车公共报告序号衔接；
 如果公共通信节点统一分配序号，应由该节点覆盖此参数。
 
 当前另一个 `FSM` 仓库的 `mission_planner_node.py` 仍同时等待 UAV 和 USV 两条
-`TASK3_FINISH`。在 USV-only 比赛配置中，主状态机还必须改为只等待 USV，或显式配置
+`FINISHED`。在 USV-only 比赛配置中，主状态机还必须改为只等待 USV，或显式配置
 `task3_requires_uav=false`；这不是子状态机可以通过伪造 UAV 完成消息解决的。
 
 ## 启动

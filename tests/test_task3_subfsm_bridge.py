@@ -179,7 +179,7 @@ class Task3SubFSMBridgeTests(unittest.TestCase):
     def test_task3_completion_carries_fsm_finish_progress(self):
         report = self.bridge.report_task3_complete(result={"bay_id": 2})
         self.assertEqual(report.message_type, "TASK3_COMPLETE")
-        self.assertEqual(report.payload["fsm_progress"], "TASK3_FINISH")
+        self.assertEqual(report.payload["fsm_progress"], "FINISHED")
         self.assertEqual(report.status.command, PlannerCommand.REPORT_TASK_COMPLETE)
 
     def test_every_task3_step_has_an_explicit_task4_resume_rule(self):

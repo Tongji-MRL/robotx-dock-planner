@@ -99,7 +99,7 @@ from .task3_ros_contract import (
     validate_vehicle_heartbeat,
 )
 from .fsm_contract import (
-    FSM_TASK3_FINISH_PROGRESS,
+    FSM_TASK3_FINISH_PROGRESS, FSM_TASK3_FINISHED_PROGRESS,
     FSM_PROGRESS_REQUIRED_FIELDS,
     TASK3_WIRE_PROGRESS,
     correct_bay_to_fsm_progress,
@@ -186,7 +186,8 @@ __all__ = [
     "Task3RosMessageFactory", "normalize_task_command",
     "BestEffortWindowId", "official_bay_id_from_left_index", "official_window_id_from_side",
     "validate_vehicle_heartbeat",
-    "FSM_TASK3_FINISH_PROGRESS", "FSM_PROGRESS_REQUIRED_FIELDS", "TASK3_WIRE_PROGRESS",
+    "FSM_TASK3_FINISH_PROGRESS", "FSM_TASK3_FINISHED_PROGRESS",
+    "FSM_PROGRESS_REQUIRED_FIELDS", "TASK3_WIRE_PROGRESS",
     "normalize_fsm_task_command", "executor_state_to_fsm_progress",
     "correct_bay_to_fsm_progress", "docking_result_to_fsm_message",
     "sprayer_window_to_fsm_progress", "firefighting_result_to_fsm_message",

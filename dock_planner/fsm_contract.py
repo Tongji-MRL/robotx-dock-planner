@@ -14,7 +14,9 @@ FSM_TASK_COMMAND_TOPIC = "/tongji_mrl/twave/task_cmd"
 FSM_PROGRESS_TOPIC = "/tongji_mrl/twave/progress"
 FSM_RESULT_TOPIC = "/tongji_mrl/twave/result"
 FSM_CHECKPOINT_TOPIC = "/tongji_mrl/twave/checkpoint"
-FSM_TASK3_FINISH_PROGRESS = "TASK3_FINISH"
+FSM_TASK3_FINISHED_PROGRESS = "FINISHED"
+# Backward-compatible import name.  The ROS wire value is FINISHED.
+FSM_TASK3_FINISH_PROGRESS = FSM_TASK3_FINISHED_PROGRESS
 
 # These are the only fields that the FSM mission_planner_node uses when it
 # consumes a vehicle progress report.  Extra fields are allowed for the
@@ -37,7 +39,7 @@ TASK3_WIRE_PROGRESS = {
     "TASK3_COLOR_SEQUENCE",
     "TASK3_WAIT_UAV_DELIVERY",
     "TASK3_EXIT_RETURN",
-    FSM_TASK3_FINISH_PROGRESS,
+    FSM_TASK3_FINISHED_PROGRESS,
     "TASK3_ERROR",
     "TASK3_BAY_CONFIRMED",
     "TASK3_DOCKING_RESULT",
@@ -178,7 +180,7 @@ def executor_state_to_fsm_progress(value: Mapping[str, Any]) -> dict[str, Any]:
         raise TypeError("executor state must be a JSON object")
     state = _text(value.get("state"), "state").upper()
     if state in {"FINISHED", "COMPLETE", "TASK3_FINISH"}:
-        progress = FSM_TASK3_FINISH_PROGRESS
+        progress = FSM_TASK3_FINISHED_PROGRESS
         error = None
     elif state == "ERROR":
         progress = "TASK3_ERROR"
@@ -194,7 +196,7 @@ def executor_state_to_fsm_progress(value: Mapping[str, Any]) -> dict[str, Any]:
     )
     if value.get("retry") is not None:
         report["retry"] = value["retry"]
-    if progress == FSM_TASK3_FINISH_PROGRESS:
+    if progress == FSM_TASK3_FINISHED_PROGRESS:
         bay_id = value.get("bay_id")
         window_id = value.get("window_id")
         if bay_id is not None and window_id is not None:

@@ -79,19 +79,19 @@ class UsvOnlyFlowTests(unittest.TestCase):
         manager.spray_complete(now=10.0)
         self.assertEqual(manager.state, UsvOnlyTask3State.REPORT_RESULT)
         manager.result_reported(now=11.0)
-        self.assertNotEqual(manager.state, UsvOnlyTask3State.COMPLETE)
+        self.assertNotEqual(manager.state, UsvOnlyTask3State.FINISHED)
         manager.navigation_reached(now=12.0)
-        self.assertEqual(manager.state, UsvOnlyTask3State.COMPLETE)
-        self.assertEqual(manager.status()["fsm_progress"], "TASK3_FINISH")
+        self.assertEqual(manager.state, UsvOnlyTask3State.FINISHED)
+        self.assertEqual(manager.status()["fsm_progress"], "FINISHED")
         self.assertEqual(manager.progress_report(), {
             "vehicle": "usv",
             "task": "TASK3",
-            "progress": "TASK3_FINISH",
+            "progress": "FINISHED",
             "error": None,
         })
         self.assertEqual(
             executor_state_to_fsm_progress(manager.status())["progress"],
-            "TASK3_FINISH",
+            "FINISHED",
         )
 
     def test_finish_uses_valid_window_fallback_without_encoding(self):
@@ -100,7 +100,7 @@ class UsvOnlyFlowTests(unittest.TestCase):
         manager.bay_id = 3
         self.assertTrue(manager.aiming_ready(gimbal_ready=True, window_id=None, now=1.0))
         self.assertEqual(manager.window_id, 1)
-        manager.state = UsvOnlyTask3State.COMPLETE
+        manager.state = UsvOnlyTask3State.FINISHED
         progress = manager.progress_report()
         self.assertNotIn("status_code", progress)
         self.assertNotIn("status_bits", progress)
@@ -297,7 +297,7 @@ class Task4IntegrationTests(unittest.TestCase):
         self.assertFalse(manager.resume_core(checkpoint['checkpoint_id'], motion_stopped=True, now=100))
         self.assertTrue(manager.resume_core(checkpoint['checkpoint_id'], motion_stopped=True,
                                             dock_exit_completed=True, now=100))
-        self.assertEqual(manager.state, UsvOnlyTask3State.COMPLETE)
+        self.assertEqual(manager.state, UsvOnlyTask3State.FINISHED)
 
     def test_all_clear_does_not_resume_core(self):
         manager = self.make_manager()

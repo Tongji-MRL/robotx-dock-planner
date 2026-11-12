@@ -114,7 +114,7 @@ class SubFSMReport:
         """
         task_name = self.status.task.name
         if self.status.task is TaskCode.TASK3:
-            progress = "TASK3_FINISH" if self.status.step == int(Task3Step.COMPLETE) else f"TASK3_{step_name(self.status.task, self.status.step)}"
+            progress = "FINISHED" if self.status.step == int(Task3Step.COMPLETE) else f"TASK3_{step_name(self.status.task, self.status.step)}"
         elif self.status.task is TaskCode.TASK4:
             progress = f"TASK4_{step_name(self.status.task, self.status.step)}"
         else:
@@ -375,7 +375,7 @@ class Task3SubFSMBridge:
         return self._emit(
             "TASK3_COMPLETE",
             command=PlannerCommand.REPORT_TASK_COMPLETE,
-            payload={"result": dict(result), "fsm_progress": "TASK3_FINISH"},
+            payload={"result": dict(result), "fsm_progress": "FINISHED"},
         )
 
     def _start_task3(self, command: MasterCommand) -> SubFSMReport:

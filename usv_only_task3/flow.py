@@ -4,7 +4,7 @@ The class in this module coordinates existing planning, perception and control
 adapters.  It never commands hardware directly.  Navigation advances only on
 explicit controller completion, dock geometry advances only after the existing
 multi-frame stabilizer has recovered three entrances, and terminal completion
-is represented by the distinct ``COMPLETE`` state.
+is represented by the distinct ``FINISHED`` state.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ class UsvOnlyTask3State(str, Enum):
     SPRAY_WATER = "SPRAY_WATER"
     REPORT_RESULT = "REPORT_RESULT"
     EXIT_DOCK = "EXIT_DOCK"
-    COMPLETE = "COMPLETE"
+    FINISHED = "FINISHED"
     PAUSED = "PAUSED"
     RETRY = "RETRY"
     ERROR = "ERROR"
@@ -57,7 +57,7 @@ class UsvOnlyTask3State(str, Enum):
 
 
 _TERMINAL_STATES = {
-    UsvOnlyTask3State.COMPLETE,
+    UsvOnlyTask3State.FINISHED,
     UsvOnlyTask3State.ERROR,
     UsvOnlyTask3State.ABORTED,
 }
@@ -183,7 +183,7 @@ class UsvOnlyTask3FlowManager:
         return bool(self.navigation_hold_reason) or self.state in {
             UsvOnlyTask3State.IDLE, UsvOnlyTask3State.WAIT_INPUTS,
             UsvOnlyTask3State.PLAN_SEARCH,
-            UsvOnlyTask3State.COMPLETE, UsvOnlyTask3State.PAUSED,
+            UsvOnlyTask3State.FINISHED, UsvOnlyTask3State.PAUSED,
             UsvOnlyTask3State.RETRY, UsvOnlyTask3State.ERROR,
             UsvOnlyTask3State.ABORTED,
         }
@@ -356,7 +356,7 @@ class UsvOnlyTask3FlowManager:
             self._enter(UsvOnlyTask3State.HOLD_POSITION, now)
             return
         if self.state is UsvOnlyTask3State.EXIT_DOCK:
-            self._enter(UsvOnlyTask3State.COMPLETE, now, "TASK3_FINISH")
+            self._enter(UsvOnlyTask3State.FINISHED, now, "FINISHED")
             return
         raise RuntimeError(f"navigation completion is invalid in {self.state.value}")
 
@@ -478,8 +478,8 @@ class UsvOnlyTask3FlowManager:
         """
 
         progress = (
-            "TASK3_FINISH"
-            if self.state is UsvOnlyTask3State.COMPLETE
+            "FINISHED"
+            if self.state is UsvOnlyTask3State.FINISHED
             else f"TASK3_{self.state.value}"
         )
         return {
@@ -513,7 +513,7 @@ class UsvOnlyTask3FlowManager:
         self._enter(UsvOnlyTask3State.PAUSED, now, reason or "PAUSED")
 
     def abort(self, reason: str, *, now: float) -> None:
-        if self.state is UsvOnlyTask3State.COMPLETE:
+        if self.state is UsvOnlyTask3State.FINISHED:
             return
         self.error = reason or "ABORTED_BY_MASTER"
         self._enter(UsvOnlyTask3State.ABORTED, now, self.error)
@@ -597,7 +597,7 @@ class UsvOnlyTask3FlowManager:
             return False
         saved = self._resume_state or UsvOnlyTask3State.WAIT_INPUTS
         if self.watering_completed:
-            destination = UsvOnlyTask3State.COMPLETE
+            destination = UsvOnlyTask3State.FINISHED
         elif self.layout is not None:
             # The boat may have moved during Task4: do not reuse old entrance
             # detections or jump straight back to spraying.
@@ -713,8 +713,8 @@ class UsvOnlyTask3FlowManager:
             "station_index": self._station_index,
             "bay_observation_ready": self._bay_observation_ready,
             "release_control": self.releases_control,
-            "task_complete": self.state is UsvOnlyTask3State.COMPLETE,
-            "fsm_progress": "TASK3_FINISH" if self.state is UsvOnlyTask3State.COMPLETE else f"TASK3_{self.state.value}",
+            "task_complete": self.state is UsvOnlyTask3State.FINISHED,
+            "fsm_progress": "FINISHED" if self.state is UsvOnlyTask3State.FINISHED else f"TASK3_{self.state.value}",
         }
 
 
