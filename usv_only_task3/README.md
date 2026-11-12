@@ -172,8 +172,9 @@ ros2 launch usv_task3_executor task3_competition_core.launch.py \
 `enable_aux_output:=false`；该参数为 false 时不会发送喷水动作。
 
 Orin 比赛运行建议使用 `scripts/start_task3_competition_staged.sh`。它在 tmux 中依次
-启动 Livox/避障桥、MAVROS、FAST-LIO，再启动上述完整 Task3 入口；每阶段收到下一层
-所需 topic 后才继续。默认水泵关闭，经过水泵硬件检查后才增加 `--pump`。
+启动 Livox/避障桥、MAVROS、FAST-LIO、导航与 Task3 状态机、OAK/云台，再启动泊位灯和
+窗口通信适配；每阶段收到下一层所需 topic 后才继续。默认水泵关闭，经过水泵硬件检查后
+才增加 `--pump`。
 
 ## Task4 Core / Advanced 衔接
 

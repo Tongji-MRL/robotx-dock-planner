@@ -85,7 +85,14 @@ wait_for_stream /mavros/state 30
 open_window fastlio "$ros_setup && exec ros2 launch fast_lio task3_mid360.launch.py"
 wait_for_stream /fast_lio/cloud_registered_body 45
 
-open_window task3 "$ros_setup && exec ros2 launch usv_task3_executor task3_competition_core.launch.py start_obstacle_stack:=false start_mavros:=false start_fast_lio:=false dry_run:=false control_enabled:=true enable_aux_output:=false start_pump:=$pump_enabled auto_pump:=$pump_enabled"
+open_window task3 "$ros_setup && exec ros2 launch usv_task3_executor task3_competition_core.launch.py start_obstacle_stack:=false start_mavros:=false start_fast_lio:=false start_window_stack:=false start_bay_indicator:=false dry_run:=false control_enabled:=true enable_aux_output:=false"
+
+open_window oak_gimbal "$ros_setup && exec ros2 launch robotx_gimbal_interfaces task3_full.launch.py start_camera:=true start_perception:=true start_aiming:=true start_gimbal:=true imu_feedforward:=true decode_task3_signal:=true start_pump:=$pump_enabled auto_pump:=$pump_enabled bench_docked:=false show_gui:=false use_web_view:=false"
+wait_for_stream /oak/rgb/image_raw 45
+wait_for_stream /gimbal/actual_angles_stamped 30
+
+open_window bay_indicator "$ros_setup && exec ros2 launch robotx_usv_perception task3_dock_vm.launch.py image_topic:=/oak/rgb/image_raw output_topic:=/robotx/perception/leds show_gui:=false"
+open_window vision_adapter "$ros_setup && exec ros2 run usv_task3_executor task3_vision_contract_adapter --ros-args -p fallback_window_id:=1 -p green_confirmation_s:=5.0"
 open_window monitor "$ros_setup && while true; do clear; date -Ins; ros2 node list | grep -E 'mavros|fast_lio|task3|livox|gimbal|pump' || true; sleep 3; done"
 
 tmux select-window -t "$session_name:task3"
