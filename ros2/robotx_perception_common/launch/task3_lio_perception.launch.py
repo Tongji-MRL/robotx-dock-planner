@@ -1,7 +1,8 @@
-"""Run FAST-LIO deskewing and feed its current body-frame scan to Task3."""
+"""Feed FAST-LIO's body-frame cloud to Task3, optionally starting FAST-LIO."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
@@ -21,6 +22,7 @@ def generate_launch_description():
             "rviz": "false",
             "use_sim_time": "false",
         }.items(),
+        condition=IfCondition(LaunchConfiguration("start_fast_lio")),
     )
 
     perception = IncludeLaunchDescription(
@@ -55,6 +57,11 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            "start_fast_lio",
+            default_value="false",
+            description="Start package fast_lio here; false consumes an existing output topic",
+        ),
         DeclareLaunchArgument(
             "fast_lio_body_cloud_topic",
             default_value="/fast_lio/cloud_registered_body",

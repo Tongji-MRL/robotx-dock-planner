@@ -182,6 +182,14 @@ ros2 launch robotx_perception_common task3_lidar_perception.launch.py \
 ros2 launch robotx_perception_common task3_lio_perception.launch.py
 ```
 
+默认认为 FAST-LIO 已由独立终端启动，只消费它的输出，因此即使当前 overlay 没有
+`fast_lio` 包也能启动感知侧。若 `fast_lio` 已安装在同一个 ROS 环境并希望一起启动：
+
+```bash
+ros2 launch robotx_perception_common task3_lio_perception.launch.py \
+  start_fast_lio:=true
+```
+
 该模式仍使用 RTK NED 作为全局任务坐标；FAST-LIO 只负责扫描内去畸变和短时
 运动估计。它不会替代 RTK，也不会使用持续累积的 `/cloud_registered` 地图来识别
 Dock。启动前需确保工作区内已有 ROS 2 包 `fast_lio`，并且 `/livox/lidar` 为
