@@ -5,11 +5,11 @@ set -euo pipefail
 workspace_path="${ROBOTX_WS:-/home/robotx/robotx_ws}"
 session_name="${TASK3_TMUX_SESSION:-robotx_task3}"
 fcu_url="serial:///dev/serial/by-id/usb-Holybro_Pixhawk6C_38002E001851333531333639-if02:57600"
-pump_enabled=false
+pump_enabled=true
 
 usage() {
-    echo "Usage: $0 [--pump]"
-    echo "  --pump  Start the verified automatic pump path as well."
+    echo "Usage: $0 [--no-pump]"
+    echo "  --no-pump  Bench/debug only: do not start the automatic pump path."
 }
 
 if [[ $# -gt 1 || ${1:-} == "--help" || ${1:-} == "-h" ]]; then
@@ -17,9 +17,12 @@ if [[ $# -gt 1 || ${1:-} == "--help" || ${1:-} == "-h" ]]; then
     [[ ${1:-} == "--help" || ${1:-} == "-h" ]] && exit 0
     exit 2
 fi
-if [[ ${1:-} == "--pump" ]]; then
-    pump_enabled=true
-fi
+case "${1:-}" in
+    "") ;;
+    --no-pump) pump_enabled=false ;;
+    --help|-h) ;;
+    *) usage; exit 2 ;;
+esac
 
 [[ -f "$workspace_path/install/setup.bash" ]] || {
     echo "Workspace install is missing: $workspace_path" >&2
