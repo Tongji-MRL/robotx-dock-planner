@@ -47,8 +47,8 @@ ros2 launch robotx_usv_perception task3_dock_vm.launch.py \
 水泵仍需显式打开。
 
 旧版同时启动 legacy `task3_executor` 的 `task3_vision_stack.launch.py` 和
-`task3_executor.launch.py` 已移到仓库根目录 `backup/task3_legacy_launch/`，不要再用于
-USV-only 流程。
+`task3_executor.launch.py` 已移出工作区到 Orin 的外部备份目录，不要再用于 USV-only
+流程。
 
 只启动通信 adapter：
 
@@ -92,22 +92,19 @@ UAV 位姿和 UAV 语义地图必须都源于同一个固定 RTK 参考点，并
 `frame_id=robotx_rtk_ned`。Task3 不再进行 UAV-NED 到 USV-NED 原点转换。
 executor 默认通过 `required_ned_frame_id:=robotx_rtk_ned` 拒绝其他坐标系。
 
-归档目录中的 `task3_ned_pose_adapter` 只用于没有共享 RTK 输出时的 MAVROS 本地里程计测试：
+已移出工作区的 `task3_ned_pose_adapter` 只用于没有共享 RTK 输出时的 MAVROS 本地里程计测试：
 
 `task3_ned_pose_adapter` converts MAVROS ENU odometry into the Task 3 NED
 contract, including heading and sequence number:
-
-文件位置：`backup/task3_legacy_launch/task3_ned_pose_adapter.launch.py`。
 
 It subscribes to `/mavros/local_position/odom` and publishes
 `/tongji_mrl/twave/ned_position` with frame `usv_fcu_local_ned`. This frame is
 local to the FCU and must not be relabelled as `robotx_rtk_ned`. Do not run it
 at the same time as the shared RTK publisher.
 
-使用这条旧测试路径时，必须从 `backup/task3_legacy_launch/` 恢复旧版
-launch 文件；它不属于正式比赛启动入口。
+使用这条旧测试路径时，必须从外部备份恢复旧版 launch 文件；它不属于正式比赛启动入口。
 
-对应的 mock launch 文件也已放在 `backup/task3_legacy_launch/`。
+对应的 mock launch 文件也已移到外部备份。
 
 Setting the same label does not transform coordinates. Formal semantic-map data
 must keep `robotx_rtk_ned`; legacy data with a different origin must be converted
@@ -133,7 +130,6 @@ The available camera-frame safe-bay position cannot be converted into a valid NE
 
 ## Running
 
-旧的 camera perception adapter launch 也已放在
-`backup/task3_legacy_launch/task3_perception_adapter.launch.py`，不属于比赛入口。
+旧的 camera perception adapter launch 也已移到外部备份，不属于比赛入口。
 
 `dry_run=false` does not enable publication of incomplete navigation data. Until camera-to-NED, absolute heading, and verified arrival interfaces are supplied, the adapter continues to parse and record inputs only.

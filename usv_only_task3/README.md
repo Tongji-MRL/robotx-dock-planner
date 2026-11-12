@@ -171,6 +171,10 @@ ros2 launch usv_task3_executor task3_competition_core.launch.py \
 位置、四角 geofence 和 Task3 命令。云台/水泵适配完成前保持
 `enable_aux_output:=false`；该参数为 false 时不会发送喷水动作。
 
+Orin 比赛运行建议使用 `scripts/start_task3_competition_staged.sh`。它在 tmux 中依次
+启动 Livox/避障桥、MAVROS、FAST-LIO，再启动上述完整 Task3 入口；每阶段收到下一层
+所需 topic 后才继续。默认水泵关闭，经过水泵硬件检查后才增加 `--pump`。
+
 ## Task4 Core / Advanced 衔接
 
 参见 [Task4 接口与恢复说明](TASK4_HANDOFF.md)。新执行器支持四阶段存档、
