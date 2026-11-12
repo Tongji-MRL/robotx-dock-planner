@@ -4,6 +4,7 @@ import unittest
 import rclpy
 from geometry_msgs.msg import PointStamped
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import String
 from usv_only_task3.node import UsvOnlyTask3Executor
 from usv_only_task3.flow import UsvHealth, UsvOnlyTask3State
@@ -121,6 +122,24 @@ class Task4NodeTests(unittest.TestCase):
         self.assertIsNone(self.node.manager.current_goal)
         self.assertEqual(self.node.manager.navigation_hold_reason, 'INVALID_NAVIGATION_CONSTRAINT')
         self.assertTrue(self.node.release_pub.messages[-1].data)
+
+    def test_standalone_gps_is_accepted_but_no_fix_is_rejected(self):
+        ordinary = NavSatFix()
+        ordinary.status.status = NavSatStatus.STATUS_FIX
+        ordinary.latitude = 31.00001
+        ordinary.longitude = 121.00001
+        ordinary.altitude = 5.0
+        ordinary.header.stamp.sec = int(time.time())
+        self.node._on_mavros_global_fix(ordinary)
+        accepted = self.node._mavros_fix
+        self.assertIsNotNone(accepted)
+
+        no_fix = NavSatFix()
+        no_fix.status.status = NavSatStatus.STATUS_NO_FIX
+        no_fix.latitude = 32.0
+        no_fix.longitude = 122.0
+        self.node._on_mavros_global_fix(no_fix)
+        self.assertEqual(self.node._mavros_fix, accepted)
 
     def test_real_goto_output_is_point_stamped_in_local_enu(self):
         now = time.time()

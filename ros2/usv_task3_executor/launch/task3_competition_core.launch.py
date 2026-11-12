@@ -1,7 +1,8 @@
 """Start the real USV-only Task 3 navigation, perception and dock stack.
 
-The team state machine remains the owner of RTK NED, geofence and task
-commands.  This launch starts the Orin-side hardware/data path, MAVROS,
+The team state machine forwards the official course configuration.  Task3
+reads the USV GPS/odometry from MAVROS and accepts either RTK-aided or ordinary
+valid GNSS.  This launch starts the Orin-side hardware/data path, MAVROS,
 FAST-LIO, dock entrance perception, OAK/window perception, waypoint controller
 and Task 3 executor.
 """
@@ -163,6 +164,15 @@ def generate_launch_description():
             "enable_goto_output": control_enabled,
             "enable_aux_output": LaunchConfiguration("enable_aux_output"),
             "required_ned_frame_id": LaunchConfiguration("required_ned_frame_id"),
+            "geofence_safety_inset_m": LaunchConfiguration(
+                "geofence_safety_inset_m"
+            ),
+            "keep_out_safety_clearance_m": LaunchConfiguration(
+                "keep_out_safety_clearance_m"
+            ),
+            "keep_out_detour_margin_m": LaunchConfiguration(
+                "keep_out_detour_margin_m"
+            ),
             "goto_cancel_topic": "/safe_passage/goto/abort",
         },
     )
@@ -186,6 +196,9 @@ def generate_launch_description():
         DeclareLaunchArgument("dry_run", default_value="true"),
         DeclareLaunchArgument("enable_aux_output", default_value="false"),
         DeclareLaunchArgument("required_ned_frame_id", default_value="robotx_rtk_ned"),
+        DeclareLaunchArgument("geofence_safety_inset_m", default_value="3.0"),
+        DeclareLaunchArgument("keep_out_safety_clearance_m", default_value="3.0"),
+        DeclareLaunchArgument("keep_out_detour_margin_m", default_value="1.0"),
         DeclareLaunchArgument("max_target_distance_m", default_value="30.0"),
         DeclareLaunchArgument("goto_max_duration_s", default_value="120.0"),
         DeclareLaunchArgument(

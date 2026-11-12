@@ -81,12 +81,13 @@ Task3 使用 `/tongji_mrl/twave/course_config` 的第一个 GPS 角点建立本�
 
 - 每次收到 Orin 本机 MAVROS GPS/odom 更新，都重新计算到圆心的距离。
 - 位于 `radius_m + keep_out_safety_clearance_m` 内：撤销旧目标，生成最近的
-  geofence 内安全退出点；默认安全余量 1.0 m。
+  geofence 内安全退出点；默认安全余量 3.0 m，以覆盖普通 GPS 降级运行。
 - 离开安全半径后：从当前真实位置重新检查原 Task3 目标并继续任务。
 - 位于圈外：检查每个导航线段是否穿过扩张后的圆。
 - 路径穿圆：计算顺、逆时针两条“切线—圆弧—切线”候选，选择较短且完全位于
   四角 geofence 内的路线，逐航点绕过后接回原 Task3 目标。
 - 绕行半径为 `radius_m + keep_out_safety_clearance_m + keep_out_detour_margin_m`；
+  默认额外绕行余量为 1.0 m。
   默认再增加 0.5 m，圆弧航点默认间距不超过 1.0 m，均可通过 launch 参数调整。
 - 坐标系不同、起终点位于扩张圆内、或两侧绕行都会越界：禁止下发目标、
   请求释放控制并报告明确原因。

@@ -17,7 +17,7 @@ from geometry_msgs.msg import PointStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import NavSatFix
+from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import Bool, String
 
 try:
@@ -27,6 +27,7 @@ except ImportError:  # Allows pure/unit-test environments without MAVROS.
 
 from dock_planner import (
     DockEntranceObservationNED,
+    GeofenceSearchConfig,
     GpsOrigin,
     GotoReferenceSample,
     NEDPoint,
@@ -100,8 +101,13 @@ class UsvOnlyTask3Executor(Node):
         self.declare_parameter("pose_timeout_s", 2.0)
         self.declare_parameter("max_retries_per_state", 2)
         self.declare_parameter("max_search_passes", 2)
-        self.declare_parameter("keep_out_safety_clearance_m", 1.0)
-        self.declare_parameter("keep_out_detour_margin_m", 0.5)
+        # Three metres keeps the default course search and keep-out decisions
+        # away from nominal GPS boundaries when RTK corrections are absent.
+        # Both remain launch parameters because a small course may require a
+        # measured, explicitly reviewed value.
+        self.declare_parameter("geofence_safety_inset_m", 3.0)
+        self.declare_parameter("keep_out_safety_clearance_m", 3.0)
+        self.declare_parameter("keep_out_detour_margin_m", 1.0)
         self.declare_parameter("keep_out_arc_spacing_m", 1.0)
         self.declare_parameter("auto_verify_stable_dock", True)
         self.declare_parameter("enable_aux_output", False)
@@ -133,6 +139,11 @@ class UsvOnlyTask3Executor(Node):
             pose_timeout_s=float(self.get_parameter("pose_timeout_s").value),
             max_retries_per_state=int(self.get_parameter("max_retries_per_state").value),
             max_search_passes=int(self.get_parameter("max_search_passes").value),
+            geofence=GeofenceSearchConfig(
+                safety_inset_m=float(
+                    self.get_parameter("geofence_safety_inset_m").value
+                )
+            ),
             keep_out_safety_clearance_m=float(
                 self.get_parameter("keep_out_safety_clearance_m").value
             ),
@@ -508,6 +519,12 @@ class UsvOnlyTask3Executor(Node):
         """Use the USV RTK/GNSS solution locally; master never relays FCU pose."""
 
         try:
+            # RTK is preferred but deliberately not required.  Accept every
+            # valid GNSS fix (standalone/SBAS/GBAS/RTK as represented by
+            # MAVROS), while refusing an explicit no-fix sample.
+            if int(msg.status.status) == int(NavSatStatus.STATUS_NO_FIX):
+                self.get_logger().warning("Ignoring MAVROS GPS sample without a fix")
+                return
             altitude = float(msg.altitude)
             if not math.isfinite(altitude):
                 altitude = 0.0 if self._rtk_origin is None else self._rtk_origin.altitude_ellipsoid_m

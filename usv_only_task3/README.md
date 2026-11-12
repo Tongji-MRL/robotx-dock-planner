@@ -49,7 +49,7 @@
 |---|---|---|
 | `/tongji_mrl/twave/course_config` | String JSON | 正式课程配置；`corners` 为四个 GPS 经纬度对象 |
 | `/mavros/state` | `mavros_msgs/State` | 实际 FCU 连接状态；未连接时立即暂停 |
-| `/mavros/global_position/global` | `sensor_msgs/NavSatFix` | USV 自己的 RTK/GNSS 位置；Task3 在 Orin 内转换为 NED |
+| `/mavros/global_position/global` | `sensor_msgs/NavSatFix` | USV 自己的 GPS；优先使用 RTK，但普通有效 GPS 也可降级运行；无定位时拒绝启动 |
 | `/mavros/local_position/odom` | `nav_msgs/Odometry` | 与 RTK NED 位置同步，用于把规划目标转换到控制器的本地 map/ENU 坐标 |
 | `/tongji_mrl/twave/task3/dock_perception` | String JSON | 现有 `entrance_observations[]` |
 | `/safe_passage/goto/status` | String | `DONE` 或 `ABORTED reason=...` |
@@ -78,6 +78,10 @@ odom 和已连接的 FCU 后自动开始搜索，不需要 Task3 `START` 命令�
 
 Task3 将第一角作为本轮本地 NED 原点，并用 Orin 本机 MAVROS 的 RTK/GNSS 位姿转换到
 同一坐标系。`corners` 必须恰好包含四个互不重复的 GPS 点。
+
+RTK 不是启动硬门槛。RTCM 不可用时，节点仍接受普通有效 GPS，并保持默认的 3 m
+geofence 内缩距离。`geofence_safety_inset_m` 可在 launch 中调整；若实测普通 GPS
+误差超过该值，应加大参数或停止自主运行。显式 `NO_FIX` 数据不会被接受。
 
 ## 输出
 

@@ -103,8 +103,10 @@ class UsvOnlyTask3Config:
     max_search_passes: int = 2
     bay_entry_depth_m: float = 1.0
     fallback_window_id: int = 1
-    keep_out_safety_clearance_m: float = 1.0
-    keep_out_detour_margin_m: float = 0.5
+    # Conservative defaults also support standalone GNSS when RTK corrections
+    # are unavailable.  The search line has its own 3 m boundary inset.
+    keep_out_safety_clearance_m: float = 3.0
+    keep_out_detour_margin_m: float = 1.0
     keep_out_arc_spacing_m: float = 1.0
     geofence: GeofenceSearchConfig = field(default_factory=GeofenceSearchConfig)
     stable_entrances: StableEntranceConfig = field(default_factory=StableEntranceConfig)
