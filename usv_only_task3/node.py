@@ -78,7 +78,7 @@ class UsvOnlyTask3Executor(Node):
         self.declare_parameter("goto_odom_topic", "/mavros/local_position/odom")
         self.declare_parameter("goto_frame_id", "map")
         self.declare_parameter("goto_max_reference_skew_s", 0.2)
-        self.declare_parameter("goto_cancel_topic", "/safe_passage/goto/cancel")
+        self.declare_parameter("goto_cancel_topic", "/safe_passage/goto/abort")
         self.declare_parameter(
             "gimbal_request_topic", "/tongji_mrl/twave/task3/gimbal_request"
         )

@@ -159,6 +159,18 @@ LiDAR 输入选择仍由现有感知 launch 决定：FAST-LIO 模式默认使用
 `/fast_lio/cloud_registered_body`（`fast_lio_body`），不可用时用 `/livox/lidar`。
 状态机只消费统一 `dock_perception`，没有复制或修改感知算法。
 
+比赛核心链路可用一个 launch 启动 Livox/避障桥、MAVROS、FAST-LIO、入口感知、
+航点控制和 USV-only executor：
+
+```bash
+ros2 launch usv_task3_executor task3_competition_core.launch.py \
+  dry_run:=false control_enabled:=true
+```
+
+它不启动总状态机，也不会伪造 RTK 数据。总状态机仍须发布 `robotx_rtk_ned`
+位置、四角 geofence 和 Task3 命令。云台/水泵适配完成前保持
+`enable_aux_output:=false`；该参数为 false 时不会发送喷水动作。
+
 ## Task4 Core / Advanced 衔接
 
 参见 [Task4 接口与恢复说明](TASK4_HANDOFF.md)。新执行器支持四阶段存档、

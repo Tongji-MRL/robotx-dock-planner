@@ -23,7 +23,7 @@ def generate_launch_description():
         DeclareLaunchArgument("keep_out_safety_clearance_m", default_value="1.0"),
         DeclareLaunchArgument("keep_out_detour_margin_m", default_value="0.5"),
         DeclareLaunchArgument("keep_out_arc_spacing_m", default_value="1.0"),
-        DeclareLaunchArgument("goto_cancel_topic", default_value="/safe_passage/goto/cancel"),
+        DeclareLaunchArgument("goto_cancel_topic", default_value="/safe_passage/goto/abort"),
         DeclareLaunchArgument(
             "gimbal_request_topic",
             default_value="/tongji_mrl/twave/task3/gimbal_request",

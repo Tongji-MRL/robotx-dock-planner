@@ -9,19 +9,14 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    package_share = FindPackageShare("robotx_perception_common")
     fast_lio_share = FindPackageShare("fast_lio")
 
     fast_lio = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            PathJoinSubstitution([fast_lio_share, "launch", "mapping.launch.py"])
+            PathJoinSubstitution(
+                [fast_lio_share, "launch", "task3_mid360.launch.py"]
+            )
         ),
-        launch_arguments={
-            "config_path": PathJoinSubstitution([package_share, "config"]),
-            "config_file": "task3_fast_lio_mid360_pointcloud2.yaml",
-            "rviz": "false",
-            "use_sim_time": "false",
-        }.items(),
         condition=IfCondition(LaunchConfiguration("start_fast_lio")),
     )
 
