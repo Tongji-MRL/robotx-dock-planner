@@ -20,6 +20,7 @@ def generate_launch_description():
         DeclareLaunchArgument("goto_odom_topic", default_value="/mavros/local_position/odom"),
         DeclareLaunchArgument("goto_frame_id", default_value="map"),
         DeclareLaunchArgument("goto_max_reference_skew_s", default_value="0.2"),
+        DeclareLaunchArgument("keep_out_safety_clearance_m", default_value="1.0"),
         DeclareLaunchArgument("keep_out_detour_margin_m", default_value="0.5"),
         DeclareLaunchArgument("keep_out_arc_spacing_m", default_value="1.0"),
         DeclareLaunchArgument("goto_cancel_topic", default_value="/safe_passage/goto/cancel"),
@@ -59,6 +60,9 @@ def generate_launch_description():
                 "goto_frame_id": LaunchConfiguration("goto_frame_id"),
                 "goto_max_reference_skew_s": ParameterValue(
                     LaunchConfiguration("goto_max_reference_skew_s"), value_type=float
+                ),
+                "keep_out_safety_clearance_m": ParameterValue(
+                    LaunchConfiguration("keep_out_safety_clearance_m"), value_type=float
                 ),
                 "keep_out_detour_margin_m": ParameterValue(
                     LaunchConfiguration("keep_out_detour_margin_m"), value_type=float

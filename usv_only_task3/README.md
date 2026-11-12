@@ -155,8 +155,9 @@ ros2 launch usv_task3_executor task3_usv_only_executor.launch.py \
 适配节点必须确认消费请求话题；`spray_complete=true` 的生产者必须承担红转绿和持续 5 秒
 验证，子状态机不会把未经验证的单帧绿色当作完成。
 
-LiDAR 输入选择仍由现有感知 launch 决定：优先 `/cloud_registered_body`，不可用时用
-`/livox/lidar`。状态机只消费统一 `dock_perception`，没有复制或修改感知算法。
+LiDAR 输入选择仍由现有感知 launch 决定：FAST-LIO 模式默认使用
+`/fast_lio/cloud_registered_body`（`fast_lio_body`），不可用时用 `/livox/lidar`。
+状态机只消费统一 `dock_perception`，没有复制或修改感知算法。
 
 ## Task4 Core / Advanced 衔接
 

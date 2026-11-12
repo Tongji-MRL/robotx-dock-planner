@@ -176,7 +176,7 @@ ros2 launch robotx_perception_common task3_lidar_perception.launch.py \
 
 沿 geofence 搜索线航行时，直接使用一帧原始扫描会受船体平移、转向和水面起伏
 影响。可选启动文件会同时启动 FAST-LIO，并把它输出的当前机体系去畸变点云
-`/cloud_registered_body` 送入同一个入口检测器：
+`/fast_lio/cloud_registered_body`（坐标帧 `fast_lio_body`）送入同一个入口检测器：
 
 ```bash
 ros2 launch robotx_perception_common task3_lio_perception.launch.py
@@ -197,8 +197,10 @@ ros2 launch robotx_perception_common task3_lidar_perception.launch.py \
   local_lateral_half_width_m:=15.0
 ```
 
-组合启动会校验输入点云的 `frame_id` 必须为 `body`，防止误把世界系累计地图
+组合启动会校验输入点云的 `frame_id` 必须为 `fast_lio_body`，防止误把世界系累计地图
 当成船体系当前扫描。FAST-LIO 应在船静止时先完成 IMU 初始化，再开始搜索航行。
+若所用 FAST-LIO 版本改了命名，可用 `fast_lio_body_cloud_topic` 和
+`fast_lio_body_frame` 两个 launch 参数覆盖。
 
 如果驱动切换为 Livox CustomMsg，可以显式选择：
 

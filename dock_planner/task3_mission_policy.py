@@ -1,8 +1,8 @@
-"""Task3 mission memory and navigation constraints supplied by the main FSM.
+"""Task3 mission memory and navigation constraints.
 
-This module never stops the boat or decides how to leave an exclusion zone.
-It checks proposed straight navigation segments, including terminal docking.
-It is deliberately separate from physical-obstacle perception and Core pause.
+The main FSM forwards the official GPS centre and radius.  Task3 converts that
+centre to the shared RTK NED frame, evaluates the live USV pose, and plans both
+an exit (when already inside) and a detour (when outside).
 """
 
 from dataclasses import dataclass
@@ -79,6 +79,48 @@ class KeepOutDetour:
     side: str
     length_m: float
     clearance_radius_m: float
+
+
+def plan_keep_out_exit(
+    start: Pose2D,
+    zone: KeepOutCircle,
+    *,
+    boundary: Sequence[tuple[float, float]],
+    exit_margin_m: float = 0.5,
+) -> Pose2D:
+    """Return the nearest geofence-safe point outside the protected circle.
+
+    The normal radial direction is shortest.  Nearby directions are tried as a
+    fallback when the circle touches the geofence.  This route is only used to
+    leave an active zone; ordinary paths are never allowed through the circle.
+    """
+    if not isinstance(start, Pose2D):
+        raise TypeError("start must be Pose2D")
+    margin = _number(exit_margin_m, "exit_margin_m")
+    if margin < 0.0:
+        raise ValueError("exit_margin_m must be nonnegative")
+    polygon = tuple((_number(item[0], "boundary north"),
+                     _number(item[1], "boundary east")) for item in boundary)
+    radius = zone.radius_m + zone.clearance_m + margin
+    dx, dy = start.x - zone.north, start.y - zone.east
+    preferred = math.atan2(dy, dx) if math.hypot(dx, dy) > 1e-6 else None
+    if preferred is None:
+        angles = [index * math.pi / 12.0 for index in range(24)]
+    else:
+        offsets = [0.0]
+        for index in range(1, 13):
+            offsets.extend((index * math.pi / 12.0, -index * math.pi / 12.0))
+        angles = [preferred + offset for offset in offsets]
+    candidates = []
+    for angle in angles:
+        point = (zone.north + radius * math.cos(angle),
+                 zone.east + radius * math.sin(angle))
+        if _inside_convex_polygon(point, polygon):
+            candidates.append((math.dist((start.x, start.y), point), angle, point))
+    if not candidates:
+        raise ValueError("KEEP_OUT_NO_EXIT_INSIDE_GEOFENCE")
+    _, angle, point = min(candidates, key=lambda item: item[0])
+    return Pose2D(point[0], point[1], angle)
 
 
 def _inside_convex_polygon(point, polygon: Sequence[tuple[float, float]]) -> bool:
@@ -176,17 +218,12 @@ def plan_keep_out_detour(
 
 
 class Task3NavigationConstraint:
-    """Versioned full snapshots from main; no TTL and no implicit AllClear.
-
-    Bind a fresh instance to one run. Main must resend an outside snapshot
-    after it finishes an escape. A different run requires an executor restart.
-    """
+    """Versioned normalized zones; no TTL and no implicit AllClear."""
 
     def __init__(self):
         self.run_id = None
         self.revision = -1
         self.zone = None
-        self.hold_reason = None
         self._snapshot = None
 
     def apply(self, value: Mapping) -> bool:
@@ -204,17 +241,11 @@ class Task3NavigationConstraint:
             if dict(value) != self._snapshot:
                 raise ValueError("conflicting constraint at the same revision")
             return False
-        if value.get("motion_stopped") is not True:
-            raise ValueError("main must confirm motion_stopped before applying its decision")
         active = value.get("active")
         if not isinstance(active, bool):
             raise ValueError("active must be boolean; false means explicit AllClear")
         zone = None
-        reason = None
         if active:
-            inside = value.get("inside")
-            if not isinstance(inside, bool):
-                raise ValueError("main must supply inside as a boolean")
             frame = value.get("frame_id")
             if not isinstance(frame, str) or not frame.strip():
                 raise ValueError("frame_id is required")
@@ -227,15 +258,12 @@ class Task3NavigationConstraint:
                 raise ValueError("radius must be positive and clearance nonnegative")
             zone = KeepOutCircle(_number(center.get("north"), "north"),
                                  _number(center.get("east"), "east"), radius, clearance, frame)
-            reason = "WAIT_MAIN_ZONE_EXIT" if inside else None
         self.run_id, self.revision = run_id, revision
-        self.zone, self.hold_reason = zone, reason
+        self.zone = zone
         self._snapshot = dict(value)
         return True
 
     def segment_block_reason(self, start, end, frame_id):
-        if self.hold_reason:
-            return self.hold_reason
         if self.zone is None:
             return None
         if frame_id != self.zone.frame_id:
@@ -246,11 +274,10 @@ class Task3NavigationConstraint:
 
     def to_dict(self):
         return {"run_id": self.run_id, "revision": self.revision,
-                "active": self.zone is not None, "hold_reason": self.hold_reason,
-                "snapshot": self._snapshot}
+                "active": self.zone is not None, "snapshot": self._snapshot}
 
 
 __all__ = [
     "KeepOutCircle", "KeepOutDetour", "Task3NavigationConstraint",
-    "Task3ResumePhase", "plan_keep_out_detour", "resume_phase",
+    "Task3ResumePhase", "plan_keep_out_detour", "plan_keep_out_exit", "resume_phase",
 ]

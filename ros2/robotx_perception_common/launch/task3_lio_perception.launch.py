@@ -30,11 +30,11 @@ def generate_launch_description():
             )
         ),
         launch_arguments={
-            "input_topic": "/cloud_registered_body",
+            "input_topic": LaunchConfiguration("fast_lio_body_cloud_topic"),
             "input_format": "pointcloud2",
             "input_frame_mode": "sensor",
-            "expected_input_frame": "body",
-            # /cloud_registered_body is in the Mid-360 internal IMU frame.
+            "expected_input_frame": LaunchConfiguration("fast_lio_body_frame"),
+            # FAST-LIO's body cloud is in the Mid-360 internal IMU frame.
             # Convert it to the measured USV base_link installation point.
             "input_to_base_x_m": "0.161",
             "input_to_base_y_m": "0.12329",
@@ -55,6 +55,11 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            "fast_lio_body_cloud_topic",
+            default_value="/fast_lio/cloud_registered_body",
+        ),
+        DeclareLaunchArgument("fast_lio_body_frame", default_value="fast_lio_body"),
         DeclareLaunchArgument("local_max_candidates", default_value="6"),
         DeclareLaunchArgument("local_max_range_m", default_value="15.0"),
         DeclareLaunchArgument("local_lateral_half_width_m", default_value="15.0"),

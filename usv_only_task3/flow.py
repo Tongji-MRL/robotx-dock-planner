@@ -29,6 +29,7 @@ from dock_planner.types import Pose2D
 from dock_planner.task3_mission_policy import (
     Task3NavigationConstraint,
     plan_keep_out_detour,
+    plan_keep_out_exit,
     resume_phase,
 )
 
@@ -92,6 +93,7 @@ class UsvOnlyTask3Config:
     max_search_passes: int = 2
     bay_entry_depth_m: float = 1.0
     fallback_window_id: int = 1
+    keep_out_safety_clearance_m: float = 1.0
     keep_out_detour_margin_m: float = 0.5
     keep_out_arc_spacing_m: float = 1.0
     geofence: GeofenceSearchConfig = field(default_factory=GeofenceSearchConfig)
@@ -111,6 +113,9 @@ class UsvOnlyTask3Config:
             raise ValueError("bay_entry_depth_m must be finite and nonnegative")
         if self.fallback_window_id not in (1, 2):
             raise ValueError("fallback_window_id must be 1 or 2")
+        if (not math.isfinite(self.keep_out_safety_clearance_m)
+                or self.keep_out_safety_clearance_m < 0):
+            raise ValueError("keep_out_safety_clearance_m must be finite and nonnegative")
         if not math.isfinite(self.keep_out_detour_margin_m) or self.keep_out_detour_margin_m < 0:
             raise ValueError("keep_out_detour_margin_m must be finite and nonnegative")
         if not math.isfinite(self.keep_out_arc_spacing_m) or self.keep_out_arc_spacing_m <= 0:
@@ -176,6 +181,9 @@ class UsvOnlyTask3FlowManager:
         self.watering_completed = False
         self._detour_waypoints: list[Pose2D] = []
         self._detour_side: str | None = None
+        self._keep_out_exit_waypoint: Pose2D | None = None
+        self._inside_official_zone = False
+        self._inside_protected_zone = False
 
 
     @property
@@ -203,6 +211,8 @@ class UsvOnlyTask3FlowManager:
     def current_goal(self) -> Pose2D | None:
         if self.releases_control or self.search_plan is None:
             return None
+        if self._keep_out_exit_waypoint is not None:
+            return self._keep_out_exit_waypoint
         if self._detour_waypoints:
             return self._detour_waypoints[0]
         return self._mission_goal
@@ -272,10 +282,12 @@ class UsvOnlyTask3FlowManager:
         self._line_index = 0
         self._station_index = 0
         self._enter(UsvOnlyTask3State.TRANSIT_TO_SEARCH, now)
+        self._refresh_keep_out_relation(now=now)
 
     def update_health(self, health: UsvHealth, current_pose: Pose2D, *, now: float) -> None:
         self.health = health
         self.current_pose = current_pose
+        self._refresh_keep_out_relation(now=now)
         if self.state in _TERMINAL_STATES or self.state is UsvOnlyTask3State.IDLE:
             return
         ready, reason = health.ready(now, self.config)
@@ -303,6 +315,9 @@ class UsvOnlyTask3FlowManager:
 
     def navigation_reached(self, *, now: float) -> None:
         if self.navigation_hold_reason:
+            return
+        if self._keep_out_exit_waypoint is not None:
+            self._refresh_keep_out_relation(now=now)
             return
         if self._detour_waypoints:
             self._detour_waypoints.pop(0)
@@ -536,6 +551,7 @@ class UsvOnlyTask3FlowManager:
         self._enter(UsvOnlyTask3State.RETRY, now, reason)
 
     def tick(self, *, now: float) -> None:
+        self._refresh_keep_out_relation(now=now)
         if self._core_paused or self.navigation_hold_reason:
             return
         if self.state in _TERMINAL_STATES or self.state is UsvOnlyTask3State.IDLE:
@@ -619,18 +635,77 @@ class UsvOnlyTask3FlowManager:
             raise
         if not changed:
             return False
-        # Main has stopped motion and supplied its decision. Clear stale
-        # confirmations; preserve task progress and the Core checkpoint.
+        # Preserve mission progress, but invalidate geometry and waypoints that
+        # were computed before this official zone update.
         self._dock_frames.clear()
         self._detour_waypoints.clear()
         self._detour_side = None
+        self._keep_out_exit_waypoint = None
         if self._navigation_hold_at is not None:
             self.state_entered_at += max(0.0, now - self._navigation_hold_at)
         self._navigation_hold_at = None
         self.navigation_hold_reason = None
-        if self.navigation_constraint.hold_reason:
-            self.hold_navigation(self.navigation_constraint.hold_reason, now=now)
+        self._refresh_keep_out_relation(now=now)
         return True
+
+    def _refresh_keep_out_relation(self, *, now: float) -> None:
+        """Re-evaluate the active circle from every fresh RTK pose."""
+        zone = self.navigation_constraint.zone
+        managed_holds = {
+            "WAIT_TASK3_GEOFENCE_FOR_KEEP_OUT_EXIT",
+            "KEEP_OUT_NO_EXIT_INSIDE_GEOFENCE",
+        }
+        if zone is None:
+            self._inside_official_zone = False
+            self._inside_protected_zone = False
+            self._keep_out_exit_waypoint = None
+            if self.navigation_hold_reason in managed_holds:
+                self.navigation_hold_reason = None
+                self._navigation_hold_at = None
+            return
+        if self.current_pose is None:
+            return
+        distance = math.hypot(
+            self.current_pose.x - zone.north,
+            self.current_pose.y - zone.east,
+        )
+        self._inside_official_zone = distance <= zone.radius_m
+        self._inside_protected_zone = distance <= zone.radius_m + zone.clearance_m
+        if not self._inside_protected_zone:
+            if self._keep_out_exit_waypoint is not None:
+                self._keep_out_exit_waypoint = None
+                self._detour_waypoints.clear()
+                self._detour_side = None
+            if self.navigation_hold_reason in managed_holds:
+                self.navigation_hold_reason = None
+                self._navigation_hold_at = None
+            return
+
+        # Once inside, previous mission/detour targets are invalid.  Generate a
+        # short radial exit target from the latest pose instead.
+        self._detour_waypoints.clear()
+        self._detour_side = None
+        if self._keep_out_exit_waypoint is not None:
+            return
+        if self.search_plan is None:
+            self.hold_navigation("WAIT_TASK3_GEOFENCE_FOR_KEEP_OUT_EXIT", now=now)
+            return
+        boundary = tuple((point.north, point.east)
+                         for point in self.search_plan.ordered_corners)
+        try:
+            self._keep_out_exit_waypoint = plan_keep_out_exit(
+                self.current_pose,
+                zone,
+                boundary=boundary,
+                exit_margin_m=self.config.keep_out_detour_margin_m,
+            )
+        except (TypeError, ValueError) as exc:
+            self._keep_out_exit_waypoint = None
+            self.hold_navigation(str(exc), now=now)
+            return
+        if self.navigation_hold_reason in managed_holds:
+            self.navigation_hold_reason = None
+            self._navigation_hold_at = None
 
     def hold_navigation(self, reason: str, *, now: float) -> None:
         if self._navigation_hold_at is None:
@@ -646,15 +721,10 @@ class UsvOnlyTask3FlowManager:
         if self.health is None or not self.health.ready(now, self.config)[0]:
             self.pause("NAVIGATION_REQUIRES_FRESH_HEALTH", now=now)
             return False
+        self._refresh_keep_out_relation(now=now)
+        if self._keep_out_exit_waypoint is not None:
+            return True
         if self._detour_waypoints:
-            zone = self.navigation_constraint.zone
-            if zone is not None and zone.contains(
-                (self.current_pose.x, self.current_pose.y)
-            ):
-                self.hold_navigation("WAIT_MAIN_ZONE_EXIT", now=now)
-                self._detour_waypoints.clear()
-                self._detour_side = None
-                return False
             return True
         reason = self.navigation_constraint.segment_block_reason(
             (self.current_pose.x, self.current_pose.y), (goal.x, goal.y),
@@ -704,6 +774,14 @@ class UsvOnlyTask3FlowManager:
             "navigation_hold_reason": self.navigation_hold_reason,
             "keep_out_detour_side": self._detour_side,
             "keep_out_detour_waypoints_remaining": len(self._detour_waypoints),
+            "keep_out_inside_official_zone": self._inside_official_zone,
+            "keep_out_inside_protected_zone": self._inside_protected_zone,
+            "keep_out_mode": (
+                "EXITING" if self._keep_out_exit_waypoint is not None
+                else "DETOUR" if self._detour_waypoints
+                else "ACTIVE" if self.navigation_constraint.zone is not None
+                else "CLEAR"
+            ),
             "detail": self.detail,
             "error": self.error,
             "bay_id": self.bay_id,

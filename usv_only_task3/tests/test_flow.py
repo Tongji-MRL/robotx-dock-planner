@@ -241,9 +241,9 @@ class Task4IntegrationTests(unittest.TestCase):
     begin = UsvOnlyFlowTests.begin
     stable_frame = UsvOnlyFlowTests.stable_frame
 
-    def zone(self, revision=1, inside=False):
-        return dict(run_id=7, revision=revision, motion_stopped=True, active=True,
-                    inside=inside, frame_id='robotx_rtk_ned',
+    def zone(self, revision=1):
+        return dict(run_id=7, revision=revision, active=True,
+                    frame_id='robotx_rtk_ned',
                     center_ned={'north': 10, 'east': 5}, radius_m=2, clearance_m=1)
 
     def test_core_pause_is_idempotent_and_freezes_budget(self):
@@ -302,9 +302,9 @@ class Task4IntegrationTests(unittest.TestCase):
     def test_all_clear_does_not_resume_core(self):
         manager = self.make_manager()
         self.begin(manager)
-        manager.apply_navigation_constraint(self.zone(inside=True), now=1)
+        manager.apply_navigation_constraint(self.zone(), now=1)
         checkpoint = manager.pause_for_core(now=2)
-        manager.apply_navigation_constraint(dict(run_id=7, revision=2, motion_stopped=True, active=False), now=100)
+        manager.apply_navigation_constraint(dict(run_id=7, revision=2, active=False), now=100)
         self.assertEqual(manager.state, UsvOnlyTask3State.PAUSED)
         self.assertEqual(manager.core_checkpoint, checkpoint)
         self.assertIsNone(manager.current_goal)
@@ -351,3 +351,17 @@ class Task4IntegrationTests(unittest.TestCase):
         self.assertTrue(manager.releases_control)
         manager.tick(now=10000)
         self.assertEqual(manager._retry_counts, before)
+
+    def test_live_pose_inside_zone_generates_exit_then_resumes(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager.apply_navigation_constraint(self.zone(), now=1)
+        mission_goal = manager._mission_goal
+        manager.update_health(health(2), Pose2D(10, 5, 0), now=2)
+        self.assertEqual(manager.status()['keep_out_mode'], 'EXITING')
+        exit_goal = manager.current_goal
+        self.assertIsNotNone(exit_goal)
+        self.assertNotEqual(exit_goal, mission_goal)
+        manager.update_health(health(3), exit_goal, now=3)
+        self.assertFalse(manager.status()['keep_out_inside_protected_zone'])
+        self.assertNotEqual(manager.status()['keep_out_mode'], 'EXITING')

@@ -7,7 +7,7 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 from usv_only_task3.node import UsvOnlyTask3Executor
 from usv_only_task3.flow import UsvHealth, UsvOnlyTask3State
-from dock_planner import Pose2D, NEDPoint
+from dock_planner import GpsOrigin, Pose2D, NEDPoint
 
 
 class Recorder:
@@ -37,6 +37,7 @@ class Task4NodeTests(unittest.TestCase):
         self.node.manager.begin((NEDPoint(0, 0, 0), NEDPoint(20, 0, 0),
                                  NEDPoint(20, 10, 0), NEDPoint(0, 10, 0)),
                                 Pose2D(1, 1, 0), UsvHealth(now, 'robotx_rtk_ned'), now=now)
+        self.node._rtk_origin = GpsOrigin(31.0, 121.0, 5.0)
 
     def tearDown(self):
         self.node.destroy_node()
@@ -57,16 +58,18 @@ class Task4NodeTests(unittest.TestCase):
         self.assertEqual(self.node.manager.state, before)
         self.assertEqual(self.node.goto_pub.messages, [])  # dry run
 
-    def test_inside_hold_and_all_clear_preserve_progress(self):
+    def test_official_gps_zone_is_classified_locally_and_all_clear_resumes(self):
         before = self.node.manager.state
-        self.send({'task': 'TASK4', 'command': dict(type='TASK4_KEEP_OUT', run_id=1,
-            revision=1, motion_stopped=True, inside=True, frame_id='robotx_rtk_ned',
-            center_ned={'north': 5, 'east': 5}, radius_m=2, clearance_m=1)})
+        self.send({'run_id': 1, 'command': 'TASK4_KEEP_OUT_ZONE',
+                   'parameters': {'official_command_seq': 1, 'vehicle_type': 1,
+                                  'center': {'latitude': 31.0, 'longitude': 121.0},
+                                  'radius_m': 2.0}})
         self.assertEqual(self.node.manager.state, before)
-        self.assertIsNone(self.node.manager.current_goal)
-        self.assertTrue(self.node.release_pub.messages[-1].data)
-        self.send({'task': 'TASK4', 'command': dict(type='TASK4_ALL_CLEAR', run_id=1,
-                   revision=2, motion_stopped=True)})
+        self.assertEqual(self.node.manager.status()['keep_out_mode'], 'EXITING')
+        self.assertIsNotNone(self.node.manager.current_goal)
+        self.assertFalse(self.node.release_pub.messages[-1].data)
+        self.send({'run_id': 1, 'command': 'TASK4_ALL_CLEAR',
+                   'parameters': {'official_command_seq': 2, 'vehicle_type': 1}})
         self.assertEqual(self.node.manager.state, before)
         self.assertIsNotNone(self.node.manager.current_goal)
 

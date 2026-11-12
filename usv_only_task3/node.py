@@ -65,6 +65,7 @@ class UsvOnlyTask3Executor(Node):
         self.declare_parameter("pose_timeout_s", 2.0)
         self.declare_parameter("max_retries_per_state", 2)
         self.declare_parameter("max_search_passes", 2)
+        self.declare_parameter("keep_out_safety_clearance_m", 1.0)
         self.declare_parameter("keep_out_detour_margin_m", 0.5)
         self.declare_parameter("keep_out_arc_spacing_m", 1.0)
         self.declare_parameter("auto_verify_stable_dock", True)
@@ -96,6 +97,9 @@ class UsvOnlyTask3Executor(Node):
             pose_timeout_s=float(self.get_parameter("pose_timeout_s").value),
             max_retries_per_state=int(self.get_parameter("max_retries_per_state").value),
             max_search_passes=int(self.get_parameter("max_search_passes").value),
+            keep_out_safety_clearance_m=float(
+                self.get_parameter("keep_out_safety_clearance_m").value
+            ),
             keep_out_detour_margin_m=float(
                 self.get_parameter("keep_out_detour_margin_m").value
             ),
@@ -123,6 +127,9 @@ class UsvOnlyTask3Executor(Node):
             vehicle_id=str(self.get_parameter("vehicle_id").value),
             initial_seq=int(self.get_parameter("report_seq_start").value),
         )
+        self._rtk_origin: GpsOrigin | None = None
+        self._pending_keep_out: dict | None = None
+        self._keep_out_revision = 0
 
         self.create_subscription(String, "/tongji_mrl/twave/task_cmd", self._on_command, 10)
         self.create_subscription(String, "/tongji_mrl/twave/task3/navigation_constraint",
@@ -183,19 +190,35 @@ class UsvOnlyTask3Executor(Node):
             if str(value.get("vehicle", "usv")).lower() != "usv":
                 return
             task = str(value.get("task", "TASK3")).upper()
+            if isinstance(value.get("command"), str) and str(value["command"]).upper() in {
+                "TASK4_BEGIN", "TASK4_KEEP_OUT", "TASK4_KEEP_OUT_ZONE", "TASK4_ALL_CLEAR"
+            }:
+                task = "TASK4"
             now = time.time()
             if task == "TASK4":
                 raw = value.get("command", {})
-                if not isinstance(raw, dict):
-                    raise ValueError("TASK4 command must be an object")
-                kind = raw.get("type")
+                parameters = value.get("parameters", {})
+                if parameters is None:
+                    parameters = {}
+                if not isinstance(parameters, dict):
+                    raise ValueError("TASK4 parameters must be an object")
+                if isinstance(raw, str):
+                    kind = raw.upper()
+                    command = dict(parameters)
+                elif isinstance(raw, dict):
+                    kind = str(raw.get("type", raw.get("command", ""))).upper()
+                    command = dict(parameters)
+                    command.update(raw)
+                else:
+                    raise ValueError("TASK4 command must be a string or object")
                 if kind == "TASK4_BEGIN":
                     self._pause_core(now)
-                elif kind in {"TASK4_KEEP_OUT", "TASK4_ALL_CLEAR"}:
-                    constraint = dict(raw)
-                    constraint.pop("type")
-                    constraint["active"] = kind == "TASK4_KEEP_OUT"
-                    self.manager.apply_navigation_constraint(constraint, now=now)
+                elif kind in {"TASK4_KEEP_OUT", "TASK4_KEEP_OUT_ZONE"}:
+                    self._accept_keep_out(command, value, now=now)
+                    self._last_goal = None
+                    self._goal_running = False
+                elif kind == "TASK4_ALL_CLEAR":
+                    self._apply_all_clear(command, value, now=now)
                     self._last_goal = None
                     self._goal_running = False
                 else:
@@ -250,6 +273,86 @@ class UsvOnlyTask3Executor(Node):
         }, separators=(",", ":"))
         self.checkpoint_pub.publish(message)
 
+    @staticmethod
+    def _is_usv_vehicle_type(value) -> bool:
+        return value is None or value == 1 or str(value).strip().upper() in {
+            "1", "USV", "TYPE_USV", "T_WAVE", "T-WAVE"
+        }
+
+    def _next_constraint_version(self, command: dict, envelope: dict) -> tuple[int, int]:
+        run_id = command.get("run_id", envelope.get("run_id", 1))
+        if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id < 1:
+            raise ValueError("run_id must be a positive integer")
+        supplied = command.get(
+            "revision",
+            command.get("official_command_seq", command.get("command_seq")),
+        )
+        if supplied is None:
+            self._keep_out_revision += 1
+            revision = self._keep_out_revision
+        else:
+            if isinstance(supplied, bool) or not isinstance(supplied, int) or supplied < 1:
+                raise ValueError("official command sequence must be a positive integer")
+            self._keep_out_revision = max(self._keep_out_revision, supplied)
+            revision = supplied
+        return run_id, revision
+
+    def _accept_keep_out(self, command: dict, envelope: dict, *, now: float) -> None:
+        if not self._is_usv_vehicle_type(command.get("vehicle_type")):
+            return
+        center = command.get("center")
+        radius = _number(command.get("radius_m"), "radius_m")
+        if not isinstance(center, dict) or radius <= 0.0:
+            raise ValueError("KeepOutZone requires GPS center and positive radius_m")
+        run_id, revision = self._next_constraint_version(command, envelope)
+        pending = {
+            "run_id": run_id,
+            "revision": revision,
+            "center": dict(center),
+            "radius_m": radius,
+        }
+        self._pending_keep_out = pending
+        if self._rtk_origin is None:
+            self.manager.hold_navigation("WAIT_RTK_ORIGIN_FOR_KEEP_OUT", now=now)
+            return
+        self._apply_pending_keep_out(now=now)
+
+    def _apply_pending_keep_out(self, *, now: float) -> None:
+        if self._pending_keep_out is None or self._rtk_origin is None:
+            return
+        value = self._pending_keep_out
+        center = value["center"]
+        latitude = center.get("latitude", center.get("latitude_deg"))
+        longitude = center.get("longitude", center.get("longitude_deg"))
+        point = GpsOrigin(
+            _number(latitude, "center latitude"),
+            _number(longitude, "center longitude"),
+            self._rtk_origin.altitude_ellipsoid_m,
+        )
+        center_ned = geodetic_point_to_ned(point, self._rtk_origin)
+        normalized = {
+            "run_id": value["run_id"],
+            "revision": value["revision"],
+            "active": True,
+            "frame_id": self.manager.config.required_frame_id,
+            "center_ned": {"north": center_ned.north, "east": center_ned.east},
+            "radius_m": value["radius_m"],
+            "clearance_m": self.manager.config.keep_out_safety_clearance_m,
+        }
+        self.manager.apply_navigation_constraint(normalized, now=now)
+        self._pending_keep_out = None
+
+    def _apply_all_clear(self, command: dict, envelope: dict, *, now: float) -> None:
+        if not self._is_usv_vehicle_type(command.get("vehicle_type")):
+            return
+        run_id, revision = self._next_constraint_version(command, envelope)
+        self._pending_keep_out = None
+        self.manager.apply_navigation_constraint({
+            "run_id": run_id,
+            "revision": revision,
+            "active": False,
+        }, now=now)
+
     def _on_navigation_constraint(self, msg: String) -> None:
         try:
             if self.manager.apply_navigation_constraint(_object(msg.data), now=time.time()):
@@ -267,6 +370,9 @@ class UsvOnlyTask3Executor(Node):
             if frame != self.manager.config.required_frame_id:
                 raise ValueError(f"geofence frame must be {self.manager.config.required_frame_id}")
             raw = value.get("corners_ned")
+            origin_raw = value.get("rtk_origin_gps")
+            if isinstance(origin_raw, dict):
+                self._rtk_origin = GpsOrigin.from_mapping(origin_raw)
             if isinstance(raw, list):
                 if len(raw) != 4:
                     raise ValueError("corners_ned must contain four objects")
@@ -277,7 +383,6 @@ class UsvOnlyTask3Executor(Node):
                 ) for item in raw)
             else:
                 raw = value.get("corners_gps")
-                origin_raw = value.get("rtk_origin_gps")
                 if not isinstance(raw, list) or len(raw) != 4 or not isinstance(origin_raw, dict):
                     raise ValueError("provide corners_ned or four corners_gps plus rtk_origin_gps")
                 origin = GpsOrigin.from_mapping(origin_raw)
@@ -286,6 +391,7 @@ class UsvOnlyTask3Executor(Node):
                     for item in raw
                 )
             self._try_begin(time.time())
+            self._apply_pending_keep_out(now=time.time())
         except (TypeError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
             self._warn("geofence", exc)
 
@@ -553,7 +659,9 @@ class UsvOnlyTask3Executor(Node):
             report = self.manager.progress_report()
             for key in ("resume_phase", "core_checkpoint_id", "core_paused", "retry_counts",
                         "navigation_hold_reason", "navigation_constraint",
-                        "keep_out_detour_side", "keep_out_detour_waypoints_remaining"):
+                        "keep_out_detour_side", "keep_out_detour_waypoints_remaining",
+                        "keep_out_inside_official_zone", "keep_out_inside_protected_zone",
+                        "keep_out_mode"):
                 report[key] = status[key]
             progress.data = json.dumps(report, separators=(",", ":"))
             self.progress_pub.publish(progress)
@@ -582,12 +690,14 @@ class UsvOnlyTask3Executor(Node):
         payload = {
             "frame_id": self.manager.config.required_frame_id,
             "north_m": goal.x, "east_m": goal.y, "heading_rad": goal.yaw,
-            "phase": ("KEEP_OUT_DETOUR" if status["keep_out_detour_side"]
+            "phase": ("KEEP_OUT_EXIT" if status["keep_out_mode"] == "EXITING"
+                      else "KEEP_OUT_DETOUR" if status["keep_out_detour_side"]
                       else self.manager.state.value),
             "task3_phase": self.manager.state.value,
             "keep_out_detour_side": status["keep_out_detour_side"],
             "avoidance_enabled": (
-                status["keep_out_detour_side"] is not None
+                status["keep_out_mode"] == "EXITING"
+                or status["keep_out_detour_side"] is not None
                 or self.manager.state is not UsvOnlyTask3State.ENTER_BAY
             ),
             "navigation_constraint": self.manager.navigation_constraint.to_dict(),
