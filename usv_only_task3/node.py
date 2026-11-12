@@ -17,6 +17,7 @@ from geometry_msgs.msg import PointStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool, String
 
 try:
@@ -56,6 +57,40 @@ def _number(value, name: str) -> float:
     return float(value)
 
 
+def _course_gps_point(value: dict) -> GpsOrigin:
+    """Parse one official course-config GPS point."""
+
+    if not isinstance(value, dict):
+        raise ValueError("GPS point must be an object")
+    latitude = value.get("latitude")
+    longitude = value.get("longitude")
+    return GpsOrigin(
+        _number(latitude, "latitude"),
+        _number(longitude, "longitude"),
+        0.0,
+    )
+
+
+def _course_corners(value: dict) -> tuple[GpsOrigin, ...]:
+    """Return the four distinct GPS corners from the official course config."""
+
+    raw = value.get("corners")
+    if not isinstance(raw, list):
+        raise ValueError("course_config.corners must be a list")
+    if not all(isinstance(item, dict) for item in raw):
+        raise ValueError("course_config.corners must contain GPS objects")
+    points = tuple(_course_gps_point(item) for item in raw)
+    if len(points) != 4 or len(set(points)) != 4:
+        raise ValueError("course configuration must contain four distinct corners")
+    return points
+
+
+def _ned_heading_from_enu_yaw(yaw_enu_rad: float) -> float:
+    """Convert ROS map/ENU yaw into clockwise-from-north NED heading."""
+
+    return (math.pi / 2.0 - yaw_enu_rad + math.pi) % (2.0 * math.pi) - math.pi
+
+
 class UsvOnlyTask3Executor(Node):
     def __init__(self) -> None:
         super().__init__("usv_task3_executor")
@@ -79,6 +114,7 @@ class UsvOnlyTask3Executor(Node):
         self.declare_parameter("goto_frame_id", "map")
         self.declare_parameter("goto_max_reference_skew_s", 0.2)
         self.declare_parameter("goto_cancel_topic", "/safe_passage/goto/abort")
+        self.declare_parameter("mavros_global_fix_topic", "/mavros/global_position/global")
         self.declare_parameter(
             "gimbal_request_topic", "/tongji_mrl/twave/task3/gimbal_request"
         )
@@ -113,6 +149,10 @@ class UsvOnlyTask3Executor(Node):
         self._odom_east_m: float | None = None
         self._odom_north_m: float | None = None
         self._odom_timestamp: float | None = None
+        self._mavros_fix: GpsOrigin | None = None
+        self._mavros_fix_timestamp: float | None = None
+        self._mavros_heading_ned: float | None = None
+        self._mavros_connected = False
         self._last_state = None
         self._last_goal = None
         self._goal_running = False
@@ -134,20 +174,26 @@ class UsvOnlyTask3Executor(Node):
         self.create_subscription(String, "/tongji_mrl/twave/task_cmd", self._on_command, 10)
         self.create_subscription(String, "/tongji_mrl/twave/task3/navigation_constraint",
                                  self._on_navigation_constraint, 10)
-        self.create_subscription(String, "/tongji_mrl/twave/task3/geofence", self._on_geofence, 10)
-        self.create_subscription(String, "/tongji_mrl/twave/ned_position", self._on_pose, 10)
-        self.create_subscription(String, "/tongji_mrl/twave/task3/vehicle_health", self._on_health, 10)
+        self.create_subscription(
+            String, "/tongji_mrl/twave/course_config", self._on_course_config, 10
+        )
         self.create_subscription(
             Odometry,
             str(self.get_parameter("goto_odom_topic").value),
             self._on_odom,
             qos_profile_sensor_data,
         )
+        self.create_subscription(
+            NavSatFix,
+            str(self.get_parameter("mavros_global_fix_topic").value),
+            self._on_mavros_global_fix,
+            qos_profile_sensor_data,
+        )
         if MavrosState is not None:
             self.create_subscription(MavrosState, "/mavros/state", self._on_mavros_state, 10)
         else:
             self.get_logger().warning(
-                "mavros_msgs unavailable; vehicle_health must provide MAVROS connection state"
+                "mavros_msgs unavailable; Task3 cannot verify the FCU connection"
             )
         self.create_subscription(String, "/tongji_mrl/twave/task3/dock_perception", self._on_dock, 10)
         self.create_subscription(String, str(self.get_parameter("goto_status_topic").value), self._on_goto, 10)
@@ -162,6 +208,7 @@ class UsvOnlyTask3Executor(Node):
         self.progress_pub = self.create_publisher(String, "/tongji_mrl/twave/progress", 10)
         self.result_pub = self.create_publisher(String, "/tongji_mrl/twave/result", 10)
         self.preview_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/goto_preview", 10)
+        self.ned_pose_pub = self.create_publisher(String, "/tongji_mrl/twave/ned_position", 10)
         self.goto_pub = self.create_publisher(
             PointStamped, str(self.get_parameter("goto_target_topic").value), 10
         )
@@ -179,6 +226,10 @@ class UsvOnlyTask3Executor(Node):
         )
         self.release_pub = self.create_publisher(Bool, "/tongji_mrl/twave/task3/release_control", 10)
         self.mode_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/perception_mode", 10)
+        # The competition launch itself is the Task3 start signal.  It waits
+        # safely here until course corners, MAVROS GPS, odometry and FCU state
+        # have all arrived.
+        self.manager.start(time.time())
         self.create_timer(0.1, self._tick)
 
     def _warn(self, label: str, exc: Exception) -> None:
@@ -363,104 +414,121 @@ class UsvOnlyTask3Executor(Node):
             self._warn("navigation constraint", exc)
         self._publish()
 
-    def _on_geofence(self, msg: String) -> None:
-        try:
-            value = _object(msg.data)
-            frame = str(value.get("frame_id", ""))
-            if frame != self.manager.config.required_frame_id:
-                raise ValueError(f"geofence frame must be {self.manager.config.required_frame_id}")
-            raw = value.get("corners_ned")
-            origin_raw = value.get("rtk_origin_gps")
-            if isinstance(origin_raw, dict):
-                self._rtk_origin = GpsOrigin.from_mapping(origin_raw)
-            if isinstance(raw, list):
-                if len(raw) != 4:
-                    raise ValueError("corners_ned must contain four objects")
-                self._corners = tuple(NEDPoint(
-                    _number(item.get("north"), "north"),
-                    _number(item.get("east"), "east"),
-                    _number(item.get("down", 0.0), "down"),
-                ) for item in raw)
-            else:
-                raw = value.get("corners_gps")
-                if not isinstance(raw, list) or len(raw) != 4 or not isinstance(origin_raw, dict):
-                    raise ValueError("provide corners_ned or four corners_gps plus rtk_origin_gps")
-                origin = GpsOrigin.from_mapping(origin_raw)
-                self._corners = tuple(
-                    geodetic_point_to_ned(GpsOrigin.from_mapping(item), origin)
-                    for item in raw
-                )
-            self._try_begin(time.time())
-            self._apply_pending_keep_out(now=time.time())
-        except (TypeError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
-            self._warn("geofence", exc)
+    def _apply_course_config(self, value: dict) -> None:
+        """Use the official GPS course_config as the Task3 geofence."""
 
-    def _on_pose(self, msg: String) -> None:
-        try:
-            value = _object(msg.data)
-            raw = value.get("position_ned_m", value.get("position_ned"))
-            if not isinstance(raw, dict):
-                raise ValueError("position_ned_m must be an object")
-            self._pose = Pose2D(
-                _number(raw.get("north"), "north"),
-                _number(raw.get("east"), "east"),
-                _number(value.get("heading_rad"), "heading_rad"),
-            )
-            previous = self._health
-            self._health = UsvHealth(
-                pose_timestamp=_number(value.get("stamp_unix_sec", value.get("timestamp")), "timestamp"),
-                frame_id=str(value.get("frame_id", "")),
-                mavros_connected=False if previous is None else previous.mavros_connected,
-                manual_takeover=False if previous is None else previous.manual_takeover,
-            )
-            now = time.time()
-            if self.manager.state is UsvOnlyTask3State.WAIT_INPUTS:
-                self._try_begin(now)
-            else:
-                self.manager.update_health(self._health, self._pose, now=now)
-        except (TypeError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
-            self._warn("NED pose", exc)
+        gps_corners = _course_corners(value)
+        # Task3 is USV-only: the first official corner establishes one stable
+        # NED reference for the current run, shared by local GPS and Task4 GPS.
+        self._rtk_origin = gps_corners[0]
+        self._corners = tuple(
+            geodetic_point_to_ned(point, self._rtk_origin)
+            for point in gps_corners
+        )
+        now = time.time()
+        self._update_pose_from_mavros()
+        self._try_begin(now)
+        self._apply_pending_keep_out(now=now)
 
-    def _on_health(self, msg: String) -> None:
+    def _on_course_config(self, msg: String) -> None:
         try:
-            value = _object(msg.data)
-            if self._health is None:
-                return
-            self._health = UsvHealth(
-                self._health.pose_timestamp,
-                self._health.frame_id,
-                bool(value.get("mavros_connected", False)),
-                bool(value.get("manual_takeover", False)),
+            self._apply_course_config(_object(msg.data))
+        except (TypeError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+            self._warn("course config", exc)
+
+    def _on_mavros_global_fix(self, msg: NavSatFix) -> None:
+        """Use the USV RTK/GNSS solution locally; master never relays FCU pose."""
+
+        try:
+            altitude = float(msg.altitude)
+            if not math.isfinite(altitude):
+                altitude = 0.0 if self._rtk_origin is None else self._rtk_origin.altitude_ellipsoid_m
+            self._mavros_fix = GpsOrigin(
+                _number(msg.latitude, "MAVROS latitude"),
+                _number(msg.longitude, "MAVROS longitude"),
+                altitude,
             )
-            if self._pose is not None:
-                self.manager.update_health(self._health, self._pose, now=time.time())
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            self._warn("vehicle health", exc)
+            stamp = float(msg.header.stamp.sec) + float(msg.header.stamp.nanosec) * 1e-9
+            self._mavros_fix_timestamp = stamp if stamp > 0.0 else time.time()
+            self._update_pose_from_mavros()
+        except (TypeError, ValueError) as exc:
+            self._warn("MAVROS global position", exc)
+
+    def _update_pose_from_mavros(self) -> None:
+        if (
+            self._rtk_origin is None
+            or self._mavros_fix is None
+            or self._mavros_fix_timestamp is None
+            or self._mavros_heading_ned is None
+        ):
+            return
+        position = geodetic_point_to_ned(self._mavros_fix, self._rtk_origin)
+        self._pose = Pose2D(position.north, position.east, self._mavros_heading_ned)
+        previous = self._health
+        self._health = UsvHealth(
+            pose_timestamp=self._mavros_fix_timestamp,
+            frame_id=self.manager.config.required_frame_id,
+            mavros_connected=self._mavros_connected,
+            manual_takeover=False if previous is None else previous.manual_takeover,
+        )
+        message = String()
+        message.data = json.dumps({
+            "position_ned_m": {
+                "north": position.north,
+                "east": position.east,
+                "down": position.down,
+            },
+            "heading_rad": self._mavros_heading_ned,
+            "timestamp": self._mavros_fix_timestamp,
+            "frame_id": self.manager.config.required_frame_id,
+            "source": "mavros_global_position_and_odom",
+        }, separators=(",", ":"))
+        self.ned_pose_pub.publish(message)
+        now = time.time()
+        if self.manager.state is UsvOnlyTask3State.WAIT_INPUTS:
+            self._try_begin(now)
+        else:
+            self.manager.update_health(self._health, self._pose, now=now)
 
     def _on_odom(self, msg: Odometry) -> None:
         """Cache the local map/ENU position paired with the RTK NED pose."""
 
         stamp = float(msg.header.stamp.sec) + float(msg.header.stamp.nanosec) * 1e-9
-        values = (msg.pose.pose.position.x, msg.pose.pose.position.y, stamp)
+        orientation = msg.pose.pose.orientation
+        values = (
+            msg.pose.pose.position.x, msg.pose.pose.position.y, stamp,
+            orientation.x, orientation.y, orientation.z, orientation.w,
+        )
         if not all(math.isfinite(float(value)) for value in values):
             self.get_logger().warning("Ignoring non-finite MAVROS odometry sample")
             return
         self._odom_east_m = float(msg.pose.pose.position.x)
         self._odom_north_m = float(msg.pose.pose.position.y)
-        self._odom_timestamp = stamp
+        self._odom_timestamp = stamp if stamp > 0.0 else time.time()
+        # ROS map is ENU: x east, y north, yaw CCW from east.  Task3 uses NED
+        # heading: clockwise from north.
+        siny_cosp = 2.0 * (orientation.w * orientation.z + orientation.x * orientation.y)
+        cosy_cosp = 1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z)
+        self._mavros_heading_ned = _ned_heading_from_enu_yaw(math.atan2(siny_cosp, cosy_cosp))
+        self._update_pose_from_mavros()
 
     def _on_mavros_state(self, msg) -> None:
+        self._mavros_connected = bool(msg.connected)
         previous = self._health
         if previous is None:
             return
         self._health = UsvHealth(
             previous.pose_timestamp,
             previous.frame_id,
-            bool(msg.connected),
+            self._mavros_connected,
             previous.manual_takeover,
         )
         if self._pose is not None:
-            self.manager.update_health(self._health, self._pose, now=time.time())
+            now = time.time()
+            if self.manager.state is UsvOnlyTask3State.WAIT_INPUTS:
+                self._try_begin(now)
+            else:
+                self.manager.update_health(self._health, self._pose, now=now)
 
     def _try_begin(self, now: float) -> None:
         if (

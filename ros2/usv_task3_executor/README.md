@@ -44,7 +44,8 @@ ros2 launch robotx_usv_perception task3_dock_vm.launch.py \
 `dry_run:=false enable_goto_output:=true`。云台、水泵分别还需要
 `start_aiming:=true start_gimbal:=true` 和
 `start_pump:=true auto_pump:=true`；比赛入口默认启动相机、窗口感知、瞄准和云台，
-水泵仍需显式打开。
+水泵自动链路在比赛一键脚本中默认启动，但初始化保持关闭；只有 Dock 停稳、红色窗口
+有效且云台锁定后才喷水。台架排障可使用 `--no-pump`。
 
 旧版同时启动 legacy `task3_executor` 的 `task3_vision_stack.launch.py` 和
 `task3_executor.launch.py` 已移出工作区到 Orin 的外部备份目录，不要再用于 USV-only
@@ -85,30 +86,12 @@ Formal inputs from the team state machine and USV positioning both use the
 fixed shared RTK frame `robotx_rtk_ned`; a mismatch is rejected instead of
 silently mixing coordinates.
 
-## USV pose from shared RTK NED
+## USV pose from MAVROS and course config
 
-正式运行直接订阅公共定位节点发布的 `/tongji_mrl/twave/ned_position`。其 USV 位置、
-UAV 位姿和 UAV 语义地图必须都源于同一个固定 RTK 参考点，并明确填写
-`frame_id=robotx_rtk_ned`。Task3 不再进行 UAV-NED 到 USV-NED 原点转换。
-executor 默认通过 `required_ned_frame_id:=robotx_rtk_ned` 拒绝其他坐标系。
-
-已移出工作区的 `task3_ned_pose_adapter` 只用于没有共享 RTK 输出时的 MAVROS 本地里程计测试：
-
-`task3_ned_pose_adapter` converts MAVROS ENU odometry into the Task 3 NED
-contract, including heading and sequence number:
-
-It subscribes to `/mavros/local_position/odom` and publishes
-`/tongji_mrl/twave/ned_position` with frame `usv_fcu_local_ned`. This frame is
-local to the FCU and must not be relabelled as `robotx_rtk_ned`. Do not run it
-at the same time as the shared RTK publisher.
-
-使用这条旧测试路径时，必须从外部备份恢复旧版 launch 文件；它不属于正式比赛启动入口。
-
-对应的 mock launch 文件也已移到外部备份。
-
-Setting the same label does not transform coordinates. Formal semantic-map data
-must keep `robotx_rtk_ned`; legacy data with a different origin must be converted
-offline before it enters Task3.
+正式运行订阅主状态机转发的 `/tongji_mrl/twave/course_config`，其中 `corners` 是四个
+`latitude/longitude` GPS 对象。Task3 使用第一个角点建立本轮 `robotx_rtk_ned`，直接读取
+Orin 本机 `/mavros/global_position/global` 和 `/mavros/local_position/odom`，生成位置和航向。
+启动 launch 后会自动等待这些输入并开始搜索，不需要主状态机发送 Task3 `START` 或 NED 位姿。
 
 For a selected object, the published JSON is:
 

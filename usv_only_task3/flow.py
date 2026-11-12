@@ -77,7 +77,6 @@ _DOCK_OPERATION_STATES = {
 
 def _default_timeouts() -> dict[UsvOnlyTask3State, float]:
     return {
-        UsvOnlyTask3State.WAIT_INPUTS: 30.0,
         UsvOnlyTask3State.PLAN_SEARCH: 5.0,
         UsvOnlyTask3State.TRANSIT_TO_SEARCH: 180.0,
         UsvOnlyTask3State.SEARCH_PRIMARY: 300.0,

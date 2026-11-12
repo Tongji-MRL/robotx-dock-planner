@@ -4,7 +4,7 @@
 
 | 项目 | 原流程 | USV-only 流程 |
 |---|---|---|
-| Dock 初始信息 | 等 UAV 粗中心或语义地图 | 主状态机给四个 geofence GPS 角点 |
+| Dock 初始信息 | 等 UAV 粗中心或语义地图 | 主状态机转发官方 course_config 的四个 GPS 角点 |
 | 搜索路线 | 围绕粗中心的圆弧 | 四边形内部主搜索线和备用搜索线 |
 | 搜索终止 | 圆弧耗尽后重试 | 主线、备用线、有限搜索轮次后报错 |
 | Dock 确认 | 单个可用入口可进入颜色判断 | 三个入口必须通过多帧稳定确认 |
@@ -20,8 +20,8 @@
 
 | 状态 | 进入条件 | 完成条件 | 默认超时 | 失败转移 |
 |---|---|---|---:|---|
-| `IDLE` | 初始化或 RESET | START | 无 | 无 |
-| `WAIT_INPUTS` | START | 四角点、新鲜 RTK 位姿、正确 frame、MAVROS 正常 | 30 s | `RETRY`，耗尽 `ERROR` |
+| `IDLE` | RESET 后 | 自动进入等待 | 无 | 无 |
+| `WAIT_INPUTS` | launch 启动 | course_config、Orin 本机 GPS/odom、MAVROS 正常 | 无 | 输入齐全后自动开始 |
 | `PLAN_SEARCH` | 输入齐全 | 生成两条搜索线 | 5 s | 非法边界 `ERROR` |
 | `TRANSIT_TO_SEARCH` | 计划完成/新一轮 | 控制器 `DONE` | 180 s | `RETRY`，耗尽 `ERROR` |
 | `SEARCH_PRIMARY` | 到主线 | 三入口稳定或主线结束 | 300 s | 稳定转验证；线结束转备用线 |
@@ -47,11 +47,9 @@
 
 | Topic | 类型 | 字段/语义 |
 |---|---|---|
-| `/tongji_mrl/twave/task_cmd` | String JSON | `task=TASK3`；START/PAUSE/RESUME/ABORT/RESET |
-| `/tongji_mrl/twave/task3/geofence` | String JSON | `frame_id=robotx_rtk_ned` 和四角点 |
-| `/tongji_mrl/twave/ned_position` | String JSON | `position_ned_m`、`heading_rad`、时间戳、frame |
-| `/tongji_mrl/twave/task3/vehicle_health` | String JSON | `mavros_connected`、`manual_takeover` |
+| `/tongji_mrl/twave/course_config` | String JSON | 正式课程配置；`corners` 为四个 GPS 经纬度对象 |
 | `/mavros/state` | `mavros_msgs/State` | 实际 FCU 连接状态；未连接时立即暂停 |
+| `/mavros/global_position/global` | `sensor_msgs/NavSatFix` | USV 自己的 RTK/GNSS 位置；Task3 在 Orin 内转换为 NED |
 | `/mavros/local_position/odom` | `nav_msgs/Odometry` | 与 RTK NED 位置同步，用于把规划目标转换到控制器的本地 map/ENU 坐标 |
 | `/tongji_mrl/twave/task3/dock_perception` | String JSON | 现有 `entrance_observations[]` |
 | `/safe_passage/goto/status` | String | `DONE` 或 `ABORTED reason=...` |
@@ -61,27 +59,25 @@
 | `/tongji_mrl/twave/task3/gimbal_ready` | String JSON | `ready`、可选 `window_id` 1/2 |
 | `/tongji_mrl/twave/task3/spray_complete` | Bool | 完整执行“红灯、瞄准、喷水、绿灯、停泵、绿色稳定 5 秒”后才可置 true |
 
-四角点顺序不作假设。可直接输入 NED：
+启动 launch 后，Task3 自动进入 `WAIT_INPUTS`；收到课程配置、MAVROS GPS、MAVROS
+odom 和已连接的 FCU 后自动开始搜索，不需要 Task3 `START` 命令。主状态机只需原样转发
+官方 `/tongji_mrl/twave/course_config`，例如：
 
 ```json
-{"frame_id":"robotx_rtk_ned","corners_ned":[
- {"north":0,"east":0,"down":0},{"north":20,"east":0,"down":0},
- {"north":20,"east":10,"down":0},{"north":0,"east":10,"down":0}]}
+{
+  "schema_version":"twave-course-config-v1",
+  "course_id":"RX2026-A",
+  "corners":[
+    {"latitude":1.2801,"longitude":103.8501},
+    {"latitude":1.2801,"longitude":103.8503},
+    {"latitude":1.2803,"longitude":103.8503},
+    {"latitude":1.2803,"longitude":103.8501}
+  ]
+}
 ```
 
-也可输入 GPS 和建立公共 NED 的同一个 RTK 原点：
-
-```json
-{"frame_id":"robotx_rtk_ned",
- "rtk_origin_gps":{"latitude_deg":31,"longitude_deg":121,"altitude_ellipsoid_m":5},
- "corners_gps":[
-  {"latitude_deg":31,"longitude_deg":121,"altitude_ellipsoid_m":5},
-  {"latitude_deg":31.0001,"longitude_deg":121,"altitude_ellipsoid_m":5},
-  {"latitude_deg":31.0001,"longitude_deg":121.0001,"altitude_ellipsoid_m":5},
-  {"latitude_deg":31,"longitude_deg":121.0001,"altitude_ellipsoid_m":5}]}
-```
-
-GPS 高度须与 RTK 原点采用相同的椭球高定义。
+Task3 将第一角作为本轮本地 NED 原点，并用 Orin 本机 MAVROS 的 RTK/GNSS 位姿转换到
+同一坐标系。`corners` 必须恰好包含四个互不重复的 GPS 点。
 
 ## 输出
 
@@ -167,8 +163,9 @@ ros2 launch usv_task3_executor task3_competition_core.launch.py \
   dry_run:=false control_enabled:=true
 ```
 
-它不启动总状态机，也不会伪造 RTK 数据。总状态机仍须发布 `robotx_rtk_ned`
-位置、四角 geofence 和 Task3 命令。云台/水泵适配完成前保持
+它不启动总状态机，也不会伪造 RTK 数据。总状态机只须将官方
+`/tongji_mrl/twave/course_config` 转发给 USV；Task3 在 Orin 内读取 MAVROS 的 GPS 和 odom。
+云台/水泵适配完成前保持
 `enable_aux_output:=false`；该参数为 false 时不会发送喷水动作。
 
 Orin 比赛运行使用一条命令：`scripts/start_task3_competition_staged.sh`。它在 tmux 中依次

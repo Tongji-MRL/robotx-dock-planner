@@ -25,6 +25,9 @@ def generate_launch_description():
         DeclareLaunchArgument("keep_out_arc_spacing_m", default_value="1.0"),
         DeclareLaunchArgument("goto_cancel_topic", default_value="/safe_passage/goto/abort"),
         DeclareLaunchArgument(
+            "mavros_global_fix_topic", default_value="/mavros/global_position/global"
+        ),
+        DeclareLaunchArgument(
             "gimbal_request_topic",
             default_value="/tongji_mrl/twave/task3/gimbal_request",
         ),
@@ -71,6 +74,7 @@ def generate_launch_description():
                     LaunchConfiguration("keep_out_arc_spacing_m"), value_type=float
                 ),
                 "goto_cancel_topic": LaunchConfiguration("goto_cancel_topic"),
+                "mavros_global_fix_topic": LaunchConfiguration("mavros_global_fix_topic"),
                 "gimbal_request_topic": LaunchConfiguration("gimbal_request_topic"),
                 "spray_request_topic": LaunchConfiguration("spray_request_topic"),
             }],

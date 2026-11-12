@@ -65,11 +65,11 @@ message AllClear { VehicleType vehicle_type = 1; }
 }
 ```
 
-Task3 使用 geofence 输入中的 `rtk_origin_gps` 将 GPS 圆心转换到
-`robotx_rtk_ned`。若区域先于 RTK 原点到达，立即停止产生旧目标并报告
-`WAIT_RTK_ORIGIN_FOR_KEEP_OUT`，原点到达后自动继续。
+Task3 使用 `/tongji_mrl/twave/course_config` 的第一个 GPS 角点建立本轮
+`robotx_rtk_ned`，并将禁行区 GPS 圆心转换到该坐标系。若区域先于课程配置到达，
+立即停止产生旧目标并报告 `WAIT_RTK_ORIGIN_FOR_KEEP_OUT`，课程配置到达后自动继续。
 
-- 每次收到实时 `/tongji_mrl/twave/ned_position` 都重新计算到圆心的距离。
+- 每次收到 Orin 本机 MAVROS GPS/odom 更新，都重新计算到圆心的距离。
 - 位于 `radius_m + keep_out_safety_clearance_m` 内：撤销旧目标，生成最近的
   geofence 内安全退出点；默认安全余量 1.0 m。
 - 离开安全半径后：从当前真实位置重新检查原 Task3 目标并继续任务。
