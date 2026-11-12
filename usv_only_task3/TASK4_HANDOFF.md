@@ -81,6 +81,9 @@ Task3 使用 geofence 输入中的 `rtk_origin_gps` 将 GPS 圆心转换到
 - 坐标系不同、起终点位于扩张圆内、或两侧绕行都会越界：禁止下发目标、
   请求释放控制并报告明确原因。
 - 入坞与出坞同样检查禁行区，不受 `avoidance_enabled` 的终端开关影响。
+- 若禁行区在瞄准或喷水期间覆盖 Dock：立即发布停泵、停云台动作，先驶向安全
+  退出点；离开保护圆后停车等待 AllClear。AllClear 后回到 Dock 观察位重新验证
+  入口并重新瞄准，禁止沿用旧瞄准结果直接续喷。等待期间不消耗状态超时或重试次数。
 - 不设自动过期时间；START/RESET 不清掉禁行区。
 
 AllClear：
@@ -98,6 +101,10 @@ AllClear 只移除导航约束，不恢复 Core、不清重试次数、不重新
 新增 `/tongji_mrl/twave/task3/state`，可看 `resume_phase`、`core_paused`、
 `navigation_constraint`、`navigation_hold_reason`、`keep_out_mode`、
 `keep_out_inside_official_zone`、`keep_out_inside_protected_zone` 和 `retry_counts`。
+`keep_out_suspended_state` 会标出因 Dock 上禁行区而暂停的原状态。
+同时生成独立的 `keep_out_checkpoint_id`；存档包含中断前步骤、Bay/Window、入口
+布局、喷水完成标志、活动 Bay 和重试次数。它不覆盖 Task4 Core 的
+`core_checkpoint`，AllClear 恢复处理完成后才清除。
 
 - `WAIT_RTK_ORIGIN_FOR_KEEP_OUT`：缺少共享 RTK 原点，禁止继续旧路线。
 - `WAIT_TASK3_GEOFENCE_FOR_KEEP_OUT_EXIT`：已知船在圈内，但还没有安全边界。

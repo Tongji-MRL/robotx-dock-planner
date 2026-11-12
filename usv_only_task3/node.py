@@ -623,26 +623,30 @@ class UsvOnlyTask3Executor(Node):
 
     def _publish_auxiliary_actions(self) -> None:
         state = self.manager.state
-        if state is UsvOnlyTask3State.AIM_WINDOW and not self._gimbal_active:
+        keep_out_stopped = self.manager.keep_out_operation_suspended
+        if (state is UsvOnlyTask3State.AIM_WINDOW
+                and not keep_out_stopped and not self._gimbal_active):
             self._publish_action(self.gimbal_request_pub, {
                 "action": "AIM_WINDOW",
                 "bay_id": self.manager.bay_id,
             })
             self._gimbal_active = True
-        if state is UsvOnlyTask3State.SPRAY_WATER and not self._pump_started:
+        if (state is UsvOnlyTask3State.SPRAY_WATER
+                and not keep_out_stopped and not self._pump_started):
             self._publish_action(self.spray_request_pub, {
                 "action": "START",
                 "bay_id": self.manager.bay_id,
                 "window_id": self.manager.window_id,
             })
             self._pump_started = True
-        if state is not UsvOnlyTask3State.SPRAY_WATER and self._pump_started:
+        if ((state is not UsvOnlyTask3State.SPRAY_WATER or keep_out_stopped)
+                and self._pump_started):
             self._publish_action(self.spray_request_pub, {"action": "STOP"})
             self._pump_started = False
-        if state not in {
+        if (state not in {
             UsvOnlyTask3State.AIM_WINDOW,
             UsvOnlyTask3State.SPRAY_WATER,
-        } and self._gimbal_active:
+        } or keep_out_stopped) and self._gimbal_active:
             self._publish_action(self.gimbal_request_pub, {"action": "STOP"})
             self._gimbal_active = False
 
@@ -661,6 +665,7 @@ class UsvOnlyTask3Executor(Node):
                         "navigation_hold_reason", "navigation_constraint",
                         "keep_out_detour_side", "keep_out_detour_waypoints_remaining",
                         "keep_out_inside_official_zone", "keep_out_inside_protected_zone",
+                        "keep_out_suspended_state", "keep_out_checkpoint_id",
                         "keep_out_mode"):
                 report[key] = status[key]
             progress.data = json.dumps(report, separators=(",", ":"))

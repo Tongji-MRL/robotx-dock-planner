@@ -365,3 +365,53 @@ class Task4IntegrationTests(unittest.TestCase):
         manager.update_health(health(3), exit_goal, now=3)
         self.assertFalse(manager.status()['keep_out_inside_protected_zone'])
         self.assertNotEqual(manager.status()['keep_out_mode'], 'EXITING')
+
+    def test_keep_out_during_spray_exits_with_actuators_suspended_then_revalidates(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager.navigation_reached(now=1)
+        manager.accept_dock_frame(self.stable_frame(1), Pose2D(0, 5, 0), now=1)
+        manager.accept_dock_frame(self.stable_frame(2), Pose2D(0, 5, 0), now=2)
+        manager.dock_verified(now=3)
+        manager.navigation_reached(now=4)
+        manager.accept_bay_color('GREEN', .9, now=5)
+        manager.navigation_reached(now=6)
+        manager.hold_confirmed(now=7)
+        manager.aiming_ready(gimbal_ready=True, window_id=1, now=8)
+        manager.update_health(health(9), Pose2D(10, 5, 0), now=9)
+
+        manager.apply_navigation_constraint(self.zone(), now=9)
+        self.assertEqual(manager.state, UsvOnlyTask3State.SPRAY_WATER)
+        self.assertTrue(manager.keep_out_operation_suspended)
+        self.assertEqual(manager.status()['keep_out_suspended_state'], 'SPRAY_WATER')
+        checkpoint = manager.keep_out_checkpoint
+        self.assertIsNotNone(checkpoint)
+        self.assertEqual(checkpoint['saved_step'], 'SPRAY_WATER')
+        self.assertEqual(checkpoint['context']['bay_id'], 1)
+        self.assertEqual(checkpoint['context']['window_id'], 1)
+        self.assertFalse(checkpoint['context']['watering_completed'])
+        self.assertEqual(manager.status()['keep_out_checkpoint_id'],
+                         checkpoint['checkpoint_id'])
+        self.assertEqual(manager.status()['keep_out_mode'], 'EXITING')
+        exit_goal = manager.current_goal
+        self.assertIsNotNone(exit_goal)
+        self.assertFalse(manager.releases_control)
+
+        # A long official closure does not consume the spray retry budget.
+        manager.tick(now=1000)
+        self.assertEqual(manager.state, UsvOnlyTask3State.SPRAY_WATER)
+        self.assertEqual(manager._retry_counts, {})
+
+        manager.update_health(health(1001), exit_goal, now=1001)
+        self.assertTrue(manager.releases_control)
+        self.assertIsNone(manager.current_goal)
+        self.assertTrue(manager.keep_out_operation_suspended)
+
+        manager.apply_navigation_constraint(
+            dict(run_id=7, revision=2, active=False), now=1002
+        )
+        self.assertFalse(manager.keep_out_operation_suspended)
+        self.assertIsNone(manager.keep_out_checkpoint)
+        self.assertEqual(manager.state, UsvOnlyTask3State.APPROACH_DOCK)
+        self.assertTrue(manager._needs_dock_revalidation)
+        self.assertFalse(manager.watering_completed)

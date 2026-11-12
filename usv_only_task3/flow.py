@@ -63,6 +63,17 @@ _TERMINAL_STATES = {
     UsvOnlyTask3State.ABORTED,
 }
 
+_DOCK_OPERATION_STATES = {
+    UsvOnlyTask3State.APPROACH_DOCK,
+    UsvOnlyTask3State.INSPECT_BAYS,
+    UsvOnlyTask3State.ENTER_BAY,
+    UsvOnlyTask3State.HOLD_POSITION,
+    UsvOnlyTask3State.AIM_WINDOW,
+    UsvOnlyTask3State.SPRAY_WATER,
+    UsvOnlyTask3State.REPORT_RESULT,
+    UsvOnlyTask3State.EXIT_DOCK,
+}
+
 
 def _default_timeouts() -> dict[UsvOnlyTask3State, float]:
     return {
@@ -184,10 +195,16 @@ class UsvOnlyTask3FlowManager:
         self._keep_out_exit_waypoint: Pose2D | None = None
         self._inside_official_zone = False
         self._inside_protected_zone = False
+        self._keep_out_suspended_state: UsvOnlyTask3State | None = None
+        self._keep_out_suspended_at: float | None = None
+        self.keep_out_checkpoint: dict | None = None
 
 
     @property
     def releases_control(self) -> bool:
+        if (self._keep_out_suspended_state is not None
+                and self._keep_out_exit_waypoint is None):
+            return True
         return bool(self.navigation_hold_reason) or self.state in {
             UsvOnlyTask3State.IDLE, UsvOnlyTask3State.WAIT_INPUTS,
             UsvOnlyTask3State.PLAN_SEARCH,
@@ -195,6 +212,12 @@ class UsvOnlyTask3FlowManager:
             UsvOnlyTask3State.RETRY, UsvOnlyTask3State.ERROR,
             UsvOnlyTask3State.ABORTED,
         }
+
+    @property
+    def keep_out_operation_suspended(self) -> bool:
+        """Whether Dock interaction actuators must remain stopped."""
+
+        return self._keep_out_suspended_state is not None
 
     @property
     def dock_verification_ready(self) -> bool:
@@ -552,7 +575,8 @@ class UsvOnlyTask3FlowManager:
 
     def tick(self, *, now: float) -> None:
         self._refresh_keep_out_relation(now=now)
-        if self._core_paused or self.navigation_hold_reason:
+        if (self._core_paused or self.navigation_hold_reason
+                or self._keep_out_suspended_state is not None):
             return
         if self.state in _TERMINAL_STATES or self.state is UsvOnlyTask3State.IDLE:
             return
@@ -646,7 +670,63 @@ class UsvOnlyTask3FlowManager:
         self._navigation_hold_at = None
         self.navigation_hold_reason = None
         self._refresh_keep_out_relation(now=now)
+        if self.navigation_constraint.zone is None:
+            self._resume_after_keep_out(now=now)
         return True
+
+    def _suspend_dock_operation_for_keep_out(self, *, now: float) -> None:
+        if (self._keep_out_suspended_state is not None
+                or self.state not in _DOCK_OPERATION_STATES):
+            return
+        self._keep_out_suspended_state = self.state
+        self._keep_out_suspended_at = now
+        self.keep_out_checkpoint = {
+            "checkpoint_id": str(uuid.uuid4()),
+            "saved_step": self.state.value,
+            "elapsed_s": max(0.0, now - self.state_entered_at),
+            "context": {
+                "bay_id": self.bay_id,
+                "window_id": self.window_id,
+                "watering_completed": self.watering_completed,
+                "active_bay_index": self._active_bay_index,
+                "layout": None if self.layout is None else asdict(self.layout),
+                "retry_counts": {
+                    state.value: count for state, count in self._retry_counts.items()
+                },
+                "frame_id": self.config.required_frame_id,
+            },
+        }
+        self.detail = "KEEP_OUT_DOCK_OPERATION_SUSPENDED"
+
+    def _resume_after_keep_out(self, *, now: float) -> None:
+        saved = self._keep_out_suspended_state
+        if saved is None:
+            return
+        self._keep_out_suspended_state = None
+        self._keep_out_suspended_at = None
+        self.keep_out_checkpoint = None
+        self._dock_frames.clear()
+        self._detour_waypoints.clear()
+        self._detour_side = None
+
+        if saved is UsvOnlyTask3State.EXIT_DOCK and self.watering_completed:
+            self._enter(UsvOnlyTask3State.FINISHED, now, "KEEP_OUT_EXIT_COMPLETED")
+            return
+        if saved is UsvOnlyTask3State.REPORT_RESULT and self.watering_completed:
+            self._enter(UsvOnlyTask3State.REPORT_RESULT, now, "KEEP_OUT_CLEARED")
+            return
+        if self.layout is not None:
+            # The emergency exit invalidates the old bay pose and aim.  Return
+            # to the observation pose, revalidate the Dock, and aim again.
+            self._needs_dock_revalidation = True
+            self._bay_observation_ready = False
+            self._enter(
+                UsvOnlyTask3State.APPROACH_DOCK,
+                now,
+                "KEEP_OUT_CLEARED_REVALIDATE_DOCK",
+            )
+            return
+        self._enter(UsvOnlyTask3State.WAIT_INPUTS, now, "KEEP_OUT_CLEARED")
 
     def _refresh_keep_out_relation(self, *, now: float) -> None:
         """Re-evaluate the active circle from every fresh RTK pose."""
@@ -683,6 +763,7 @@ class UsvOnlyTask3FlowManager:
 
         # Once inside, previous mission/detour targets are invalid.  Generate a
         # short radial exit target from the latest pose instead.
+        self._suspend_dock_operation_for_keep_out(now=now)
         self._detour_waypoints.clear()
         self._detour_side = None
         if self._keep_out_exit_waypoint is not None:
@@ -776,6 +857,14 @@ class UsvOnlyTask3FlowManager:
             "keep_out_detour_waypoints_remaining": len(self._detour_waypoints),
             "keep_out_inside_official_zone": self._inside_official_zone,
             "keep_out_inside_protected_zone": self._inside_protected_zone,
+            "keep_out_suspended_state": (
+                None if self._keep_out_suspended_state is None
+                else self._keep_out_suspended_state.value
+            ),
+            "keep_out_checkpoint_id": (
+                None if self.keep_out_checkpoint is None
+                else self.keep_out_checkpoint["checkpoint_id"]
+            ),
             "keep_out_mode": (
                 "EXITING" if self._keep_out_exit_waypoint is not None
                 else "DETOUR" if self._detour_waypoints
