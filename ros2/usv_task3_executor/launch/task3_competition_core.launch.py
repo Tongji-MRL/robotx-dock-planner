@@ -1,8 +1,9 @@
-"""Start the real USV-only Task 3 navigation and dock-search core.
+"""Start the real USV-only Task 3 navigation, perception and dock stack.
 
 The team state machine remains the owner of RTK NED, geofence and task
 commands.  This launch starts the Orin-side hardware/data path, MAVROS,
-FAST-LIO, dock entrance perception, waypoint controller and Task 3 executor.
+FAST-LIO, dock entrance perception, OAK/window perception, waypoint controller
+and Task 3 executor.
 """
 
 from launch import LaunchDescription
@@ -29,6 +30,9 @@ def generate_launch_description():
     start_obstacle_stack = LaunchConfiguration("start_obstacle_stack")
     start_mavros = LaunchConfiguration("start_mavros")
     start_fast_lio = LaunchConfiguration("start_fast_lio")
+    start_window_stack = LaunchConfiguration("start_window_stack")
+    start_bay_indicator = LaunchConfiguration("start_bay_indicator")
+    start_communication = LaunchConfiguration("start_communication")
     control_enabled = LaunchConfiguration("control_enabled")
 
     obstacle_stack = ExecuteProcess(
@@ -65,6 +69,59 @@ def generate_launch_description():
             "fast_lio_body_cloud_topic": "/fast_lio/cloud_registered_body",
             "fast_lio_body_frame": "fast_lio_body",
         },
+    )
+
+    window_stack = _include(
+        "robotx_gimbal_interfaces",
+        "task3_full.launch.py",
+        condition=IfCondition(start_window_stack),
+        arguments={
+            "start_camera": "true",
+            "start_perception": "true",
+            "start_aiming": LaunchConfiguration("start_aiming"),
+            "start_gimbal": LaunchConfiguration("start_gimbal"),
+            "imu_feedforward": LaunchConfiguration("imu_feedforward"),
+            "decode_task3_signal": "true",
+            "start_pump": LaunchConfiguration("start_pump"),
+            "auto_pump": LaunchConfiguration("auto_pump"),
+            "bench_docked": "false",
+            "show_gui": "false",
+            "use_web_view": "false",
+            "docked_topic": "/robotx/task3/docked_confirmed",
+        },
+    )
+
+    bay_indicator = _include(
+        "robotx_usv_perception",
+        "task3_dock_vm.launch.py",
+        condition=IfCondition(start_bay_indicator),
+        arguments={
+            "image_topic": "/oak/rgb/image_raw",
+            "output_topic": "/robotx/perception/leds",
+            "show_gui": "false",
+        },
+    )
+
+    vision_contract_adapter = Node(
+        package="usv_task3_executor",
+        executable="task3_vision_contract_adapter",
+        output="screen",
+        condition=IfCondition(start_window_stack),
+        parameters=[{
+            "fallback_window_id": ParameterValue(
+                LaunchConfiguration("fallback_window_id"), value_type=int
+            ),
+            "green_confirmation_s": ParameterValue(
+                LaunchConfiguration("green_confirmation_s"), value_type=float
+            ),
+        }],
+    )
+
+    communication = _include(
+        "usv_task3_executor",
+        "task3_communication_adapter.launch.py",
+        condition=IfCondition(start_communication),
+        arguments={"run_id": LaunchConfiguration("run_id")},
     )
 
     goto = Node(
@@ -114,6 +171,17 @@ def generate_launch_description():
         DeclareLaunchArgument("start_obstacle_stack", default_value="true"),
         DeclareLaunchArgument("start_mavros", default_value="true"),
         DeclareLaunchArgument("start_fast_lio", default_value="true"),
+        DeclareLaunchArgument("start_window_stack", default_value="true"),
+        DeclareLaunchArgument("start_bay_indicator", default_value="true"),
+        DeclareLaunchArgument("start_communication", default_value="true"),
+        DeclareLaunchArgument("run_id", default_value="0"),
+        DeclareLaunchArgument("start_aiming", default_value="true"),
+        DeclareLaunchArgument("start_gimbal", default_value="true"),
+        DeclareLaunchArgument("imu_feedforward", default_value="true"),
+        DeclareLaunchArgument("start_pump", default_value="false"),
+        DeclareLaunchArgument("auto_pump", default_value="false"),
+        DeclareLaunchArgument("fallback_window_id", default_value="1"),
+        DeclareLaunchArgument("green_confirmation_s", default_value="5.0"),
         DeclareLaunchArgument("control_enabled", default_value="false"),
         DeclareLaunchArgument("dry_run", default_value="true"),
         DeclareLaunchArgument("enable_aux_output", default_value="false"),
@@ -131,6 +199,10 @@ def generate_launch_description():
         mavros,
         fast_lio,
         perception,
+        window_stack,
+        bay_indicator,
+        vision_contract_adapter,
+        communication,
         goto,
         avoidance_monitor,
         executor,

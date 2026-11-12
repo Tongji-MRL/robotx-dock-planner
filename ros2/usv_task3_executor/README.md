@@ -11,8 +11,8 @@ FSM `mission_planner_node.py` 的 `vehicle/task/progress/error/command` JSON 格
 
 ## 新版 Task3 视觉整链
 
-`task3_vision_stack.launch.py` 接入新版 OAK 视觉代码，并复用原有 LiDAR
-入口几何结果：
+比赛入口 `task3_competition_core.launch.py` 会同时启动新版 OAK 视觉、窗口感知和
+LiDAR 入口几何链：
 
 - `/robotx/perception/leds` 的红/绿 `LEDObservation` 只用于判断当前正在检查的
   bay；其像素坐标不会被当作 NED 导航坐标。
@@ -26,23 +26,29 @@ FSM `mission_planner_node.py` 的 `vehicle/task/progress/error/command` JSON 格
   无法判断左右，adapter 默认用 `window_id=1` 完成尽力报告；可在 launch 中通过节点
   参数 `fallback_window_id` 改为 2。窗口 ID 不阻塞瞄准、喷水或绿灯成功判定。
 
-安全检查命令如下。它会启动相机与两套视觉，规划保持 dry run，云台和水泵不动：
+如果只想做视觉安全检查，可以单独启动窗口栈；它不会启动导航或飞控：
 
 ```bash
-ros2 launch usv_task3_executor task3_vision_stack.launch.py
+ros2 launch robotx_gimbal_interfaces task3_full.launch.py \
+  start_pump:=false
 ```
 
 泊位灯 YOLO 若位于单独 Python 环境，可增加：
 
 ```bash
-ros2 launch usv_task3_executor task3_vision_stack.launch.py \
+ros2 launch robotx_usv_perception task3_dock_vm.launch.py \
   detector_python:=$HOME/venvs/robotx-gpu/bin/python
 ```
 
 只有监督下的正式测试才显式开启相应输出，例如
 `dry_run:=false enable_goto_output:=true`。云台、水泵分别还需要
 `start_aiming:=true start_gimbal:=true` 和
-`start_pump:=true auto_pump:=true`；默认全部关闭。
+`start_pump:=true auto_pump:=true`；比赛入口默认启动相机、窗口感知、瞄准和云台，
+水泵仍需显式打开。
+
+旧版同时启动 legacy `task3_executor` 的 `task3_vision_stack.launch.py` 和
+`task3_executor.launch.py` 已移到仓库根目录 `backup/task3_legacy_launch/`，不要再用于
+USV-only 流程。
 
 只启动通信 adapter：
 
@@ -73,18 +79,11 @@ The adapter deliberately does not subscribe to `/robotx/perception/docking/entra
 | `/task/semantic_map` | `std_msgs/msg/String` | Selects one object with `type == "dock"` and matching integer `id` (or `dock_id`), then validates its three-element finite `NED_position`. |
 | `/tongji_mrl/twave/task3/coarse_dock` | `std_msgs/msg/String` | Publishes a center-only mock record marked with `source: "semantic_map_mock"`, `mock: true`, and default `frame_id: "robotx_rtk_ned"`. |
 
-The selected dock ID defaults to `0`. Run the adapter and executor in separate terminals:
-
-```bash
-ros2 launch usv_task3_executor task3_semantic_map_mock_adapter.launch.py
-ros2 launch usv_task3_executor task3_executor.launch.py
-```
-
-Set another ID with `dock_id:=N`. Mock publication is disabled when
-`dry_run:=false`. The executor starts the bounded center-search flow after it
-has both the center and a fresh USV pose with the same `frame_id`. Formal inputs
-from UAV semantic mapping and USV positioning both use the fixed shared RTK frame
-`robotx_rtk_ned`; a mismatch is rejected instead of silently mixing coordinates.
+The selected dock ID defaults to `0`. This mock bridge belongs to the archived
+legacy center-search path and is not part of the formal competition launch.
+Formal inputs from the team state machine and USV positioning both use the
+fixed shared RTK frame `robotx_rtk_ned`; a mismatch is rejected instead of
+silently mixing coordinates.
 
 ## USV pose from shared RTK NED
 
@@ -93,33 +92,22 @@ UAV 位姿和 UAV 语义地图必须都源于同一个固定 RTK 参考点，并
 `frame_id=robotx_rtk_ned`。Task3 不再进行 UAV-NED 到 USV-NED 原点转换。
 executor 默认通过 `required_ned_frame_id:=robotx_rtk_ned` 拒绝其他坐标系。
 
-下面的 `task3_ned_pose_adapter` 只用于没有共享 RTK 输出时的 MAVROS 本地里程计测试：
+归档目录中的 `task3_ned_pose_adapter` 只用于没有共享 RTK 输出时的 MAVROS 本地里程计测试：
 
 `task3_ned_pose_adapter` converts MAVROS ENU odometry into the Task 3 NED
 contract, including heading and sequence number:
 
-```bash
-ros2 launch usv_task3_executor task3_ned_pose_adapter.launch.py
-```
+文件位置：`backup/task3_legacy_launch/task3_ned_pose_adapter.launch.py`。
 
 It subscribes to `/mavros/local_position/odom` and publishes
 `/tongji_mrl/twave/ned_position` with frame `usv_fcu_local_ned`. This frame is
 local to the FCU and must not be relabelled as `robotx_rtk_ned`. Do not run it
 at the same time as the shared RTK publisher.
 
-使用这条旧测试路径时，还必须显式让 executor 接受该测试 frame：
+使用这条旧测试路径时，必须从 `backup/task3_legacy_launch/` 恢复旧版
+launch 文件；它不属于正式比赛启动入口。
 
-```bash
-ros2 launch usv_task3_executor task3_executor.launch.py \
-  required_ned_frame_id:=usv_fcu_local_ned
-```
-
-Only for a dry-run message deliberately written in that FCU-local frame, override:
-
-```bash
-ros2 launch usv_task3_executor task3_semantic_map_mock_adapter.launch.py \
-  frame_id:=usv_fcu_local_ned
-```
+对应的 mock launch 文件也已放在 `backup/task3_legacy_launch/`。
 
 Setting the same label does not transform coordinates. Formal semantic-map data
 must keep `robotx_rtk_ned`; legacy data with a different origin must be converted
@@ -145,16 +133,7 @@ The available camera-frame safe-bay position cannot be converted into a valid NE
 
 ## Running
 
-The default is diagnostic-only:
-
-```bash
-ros2 launch usv_task3_executor task3_perception_adapter.launch.py
-```
-
-To set `dry_run` false:
-
-```bash
-ros2 launch usv_task3_executor task3_perception_adapter.launch.py dry_run:=false
-```
+旧的 camera perception adapter launch 也已放在
+`backup/task3_legacy_launch/task3_perception_adapter.launch.py`，不属于比赛入口。
 
 `dry_run=false` does not enable publication of incomplete navigation data. Until camera-to-NED, absolute heading, and verified arrival interfaces are supplied, the adapter continues to parse and record inputs only.
