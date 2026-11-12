@@ -52,6 +52,7 @@
 | `/tongji_mrl/twave/ned_position` | String JSON | `position_ned_m`、`heading_rad`、时间戳、frame |
 | `/tongji_mrl/twave/task3/vehicle_health` | String JSON | `mavros_connected`、`manual_takeover` |
 | `/mavros/state` | `mavros_msgs/State` | 实际 FCU 连接状态；未连接时立即暂停 |
+| `/mavros/local_position/odom` | `nav_msgs/Odometry` | 与 RTK NED 位置同步，用于把规划目标转换到控制器的本地 map/ENU 坐标 |
 | `/tongji_mrl/twave/task3/dock_perception` | String JSON | 现有 `entrance_observations[]` |
 | `/safe_passage/goto/status` | String | `DONE` 或 `ABORTED reason=...` |
 | `/tongji_mrl/twave/task3/dock_verified` | Bool | 可选外部验证 ACK；`auto_verify_stable_dock=true` 时不需要 |
@@ -89,7 +90,7 @@ GPS 高度须与 RTK 原点采用相同的椭球高定义。
 | `/tongji_mrl/twave/progress` | String JSON | 只包含主状态机需要的 `vehicle/task/progress/error` |
 | `/tongji_mrl/twave/result` | String JSON | 入坞稳定后发布 `DockingReport`；喷水验证完成后发布 `FirefightingReport` |
 | `/tongji_mrl/twave/task3/goto_preview` | String JSON | NED 高层目标预览 |
-| `/safe_passage/goto/target` | String JSON | 仅关闭 dry-run 且启用输出时发布 |
+| `/safe_passage/goto/target` | `geometry_msgs/PointStamped` | 本地 `map`/ENU 目标；仅关闭 dry-run、启用输出且 NED/odom 样本同步时发布 |
 | `/safe_passage/goto/cancel` | Bool | 暂停、ABORT、错误或控制释放时取消旧目标；控制器用 `ABORTED` 状态确认 |
 | `/tongji_mrl/twave/task3/action_preview` | String JSON | 云台和水泵请求预览，dry-run 中也可观察 |
 | `/tongji_mrl/twave/task3/gimbal_request` | String JSON | `AIM_WINDOW` 或 `STOP`；仅启用辅助输出时发布 |

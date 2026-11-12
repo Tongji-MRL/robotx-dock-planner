@@ -1,9 +1,9 @@
 """Thin ROS 2 adapter for the USV-only Task 3 flow.
 
-All external payloads are JSON String messages so this adapter can be wired to
-the existing shared-position, perception, safe-passage and communication
-bridges without changing those packages.  Hardware output remains gated by
-both ``dry_run`` and ``enable_goto_output``.
+Mission, perception and communication payloads use JSON String messages.  The
+team's existing single-waypoint controller is an exception: it consumes a
+``geometry_msgs/PointStamped`` in local map/ENU coordinates.  Hardware output
+remains gated by both ``dry_run`` and ``enable_goto_output``.
 """
 
 from __future__ import annotations
@@ -13,7 +13,10 @@ import math
 import time
 
 import rclpy
+from geometry_msgs.msg import PointStamped
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import Bool, String
 
 try:
@@ -24,9 +27,11 @@ except ImportError:  # Allows pure/unit-test environments without MAVROS.
 from dock_planner import (
     DockEntranceObservationNED,
     GpsOrigin,
+    GotoReferenceSample,
     NEDPoint,
     Pose2D,
     geodetic_point_to_ned,
+    ned_goal_to_goto_enu,
     parse_goto_status,
 )
 from usv_only_task3.flow import (
@@ -69,6 +74,9 @@ class UsvOnlyTask3Executor(Node):
         self.declare_parameter("report_seq_start", 0)
         self.declare_parameter("goto_target_topic", "/safe_passage/goto/target")
         self.declare_parameter("goto_status_topic", "/safe_passage/goto/status")
+        self.declare_parameter("goto_odom_topic", "/mavros/local_position/odom")
+        self.declare_parameter("goto_frame_id", "map")
+        self.declare_parameter("goto_max_reference_skew_s", 0.2)
         self.declare_parameter("goto_cancel_topic", "/safe_passage/goto/cancel")
         self.declare_parameter(
             "gimbal_request_topic", "/tongji_mrl/twave/task3/gimbal_request"
@@ -98,6 +106,9 @@ class UsvOnlyTask3Executor(Node):
         self._corners: tuple[NEDPoint, ...] | None = None
         self._pose: Pose2D | None = None
         self._health: UsvHealth | None = None
+        self._odom_east_m: float | None = None
+        self._odom_north_m: float | None = None
+        self._odom_timestamp: float | None = None
         self._last_state = None
         self._last_goal = None
         self._goal_running = False
@@ -119,6 +130,12 @@ class UsvOnlyTask3Executor(Node):
         self.create_subscription(String, "/tongji_mrl/twave/task3/geofence", self._on_geofence, 10)
         self.create_subscription(String, "/tongji_mrl/twave/ned_position", self._on_pose, 10)
         self.create_subscription(String, "/tongji_mrl/twave/task3/vehicle_health", self._on_health, 10)
+        self.create_subscription(
+            Odometry,
+            str(self.get_parameter("goto_odom_topic").value),
+            self._on_odom,
+            qos_profile_sensor_data,
+        )
         if MavrosState is not None:
             self.create_subscription(MavrosState, "/mavros/state", self._on_mavros_state, 10)
         else:
@@ -139,7 +156,7 @@ class UsvOnlyTask3Executor(Node):
         self.result_pub = self.create_publisher(String, "/tongji_mrl/twave/result", 10)
         self.preview_pub = self.create_publisher(String, "/tongji_mrl/twave/task3/goto_preview", 10)
         self.goto_pub = self.create_publisher(
-            String, str(self.get_parameter("goto_target_topic").value), 10
+            PointStamped, str(self.get_parameter("goto_target_topic").value), 10
         )
         self.goto_cancel_pub = self.create_publisher(
             Bool, str(self.get_parameter("goto_cancel_topic").value), 10
@@ -313,6 +330,18 @@ class UsvOnlyTask3Executor(Node):
                 self.manager.update_health(self._health, self._pose, now=time.time())
         except (TypeError, ValueError, json.JSONDecodeError) as exc:
             self._warn("vehicle health", exc)
+
+    def _on_odom(self, msg: Odometry) -> None:
+        """Cache the local map/ENU position paired with the RTK NED pose."""
+
+        stamp = float(msg.header.stamp.sec) + float(msg.header.stamp.nanosec) * 1e-9
+        values = (msg.pose.pose.position.x, msg.pose.pose.position.y, stamp)
+        if not all(math.isfinite(float(value)) for value in values):
+            self.get_logger().warning("Ignoring non-finite MAVROS odometry sample")
+            return
+        self._odom_east_m = float(msg.pose.pose.position.x)
+        self._odom_north_m = float(msg.pose.pose.position.y)
+        self._odom_timestamp = stamp
 
     def _on_mavros_state(self, msg) -> None:
         previous = self._health
@@ -546,9 +575,9 @@ class UsvOnlyTask3Executor(Node):
             self._navigation_active = False
         if goal_key == self._last_goal:
             return
-        self._last_goal = goal_key
         self._goal_running = False
         if goal is None:
+            self._last_goal = None
             return
         payload = {
             "frame_id": self.manager.config.required_frame_id,
@@ -565,10 +594,47 @@ class UsvOnlyTask3Executor(Node):
         }
         msg = String(); msg.data = json.dumps(payload, separators=(",", ":"))
         self.preview_pub.publish(msg)
-        if not self.dry_run and self.enable_goto_output:
-            self.goto_pub.publish(msg)
-            self._navigation_active = True
-            self._navigation_cancel_pending = False
+        if self.dry_run or not self.enable_goto_output:
+            self._last_goal = goal_key
+            return
+        if (
+            self._pose is None
+            or self._health is None
+            or self._odom_east_m is None
+            or self._odom_north_m is None
+            or self._odom_timestamp is None
+        ):
+            self.get_logger().warning(
+                "Cannot publish goto target: synchronized NED and MAVROS odom samples are required"
+            )
+            return
+        try:
+            target = ned_goal_to_goto_enu(
+                goal,
+                GotoReferenceSample(
+                    current_ned=NEDPoint(self._pose.x, self._pose.y, 0.0),
+                    odom_east_m=self._odom_east_m,
+                    odom_north_m=self._odom_north_m,
+                    ned_timestamp=self._health.pose_timestamp,
+                    odom_timestamp=self._odom_timestamp,
+                ),
+                max_reference_skew_s=float(
+                    self.get_parameter("goto_max_reference_skew_s").value
+                ),
+            )
+        except (TypeError, ValueError) as exc:
+            self.get_logger().warning(f"Cannot publish goto target: {exc}")
+            return
+        target_msg = PointStamped()
+        target_msg.header.stamp = self.get_clock().now().to_msg()
+        target_msg.header.frame_id = str(self.get_parameter("goto_frame_id").value)
+        target_msg.point.x = target.east_m
+        target_msg.point.y = target.north_m
+        target_msg.point.z = target.up_m
+        self.goto_pub.publish(target_msg)
+        self._last_goal = goal_key
+        self._navigation_active = True
+        self._navigation_cancel_pending = False
 
 
 def main(args=None) -> None:
