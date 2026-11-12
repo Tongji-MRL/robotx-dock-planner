@@ -50,19 +50,29 @@ message KeepOutZone { LatLng center = 1; float radius_m = 2; VehicleType vehicle
 message AllClear { VehicleType vehicle_type = 1; }
 ```
 
-主状态机通过 `/tongji_mrl/twave/task_cmd` 转发，不需要计算圈内外：
+主状态机通过 `/tongji_mrl/twave/task_cmd` 发送一个同时包含官方序号和禁行区的
+`TASK4_BEGIN`，不需要计算 USV 位于圈内还是圈外：
 
 ```json
 {
-  "run_id": 7,
-  "command": "TASK4_KEEP_OUT_ZONE",
-  "parameters": {
-    "official_command_seq": 18,
-    "vehicle_type": 1,
+  "vehicle": "usv",
+  "task": "TASK4",
+  "progress": null,
+  "error": null,
+  "command": {
+    "type": "TASK4_BEGIN",
+    "command_seq": 100,
     "center": {"latitude": 31.0, "longitude": 121.0},
-    "radius_m": 5.0
+    "radius_m": 5.0,
+    "vehicle_type": "USV"
   }
 }
+```
+
+命令通过校验后，Task3 立即在 `/tongji_mrl/twave/result` 返回：
+
+```json
+{"incident_ack":{"command_seq":100}}
 ```
 
 Task3 使用 `/tongji_mrl/twave/course_config` 的第一个 GPS 角点建立本轮
@@ -82,19 +92,20 @@ Task3 使用 `/tongji_mrl/twave/course_config` 的第一个 GPS 角点建立本�
   请求释放控制并报告明确原因。
 - 入坞与出坞同样检查禁行区，不受 `avoidance_enabled` 的终端开关影响。
 - 若禁行区在瞄准或喷水期间覆盖 Dock：立即发布停泵、停云台动作，先驶向安全
-  退出点；离开保护圆后停车等待 AllClear。AllClear 后回到 Dock 观察位重新验证
+  退出点；离开保护圆后停车等待 `resume`。恢复后回到 Dock 观察位重新验证
   入口并重新瞄准，禁止沿用旧瞄准结果直接续喷。等待期间不消耗状态超时或重试次数。
-- 不设自动过期时间；START/RESET 不清掉禁行区。
+- 不设自动过期时间；Task3 START/RESET 不清掉禁行区。
 
-AllClear：
+Task4 结束后，主状态机发送：
 
 ```json
-{"run_id":7,"command":"TASK4_ALL_CLEAR","parameters":{"official_command_seq":19,"vehicle_type":1}}
+{"vehicle":"usv","task":"TASK4","progress":null,"error":null,"command":"resume"}
 ```
 
-AllClear 只移除导航约束，不恢复 Core、不清重试次数、不重新开始 Task3。
-节点也兼容带 `task=TASK4` 的嵌套命令，以及已经转换成 NED 的内部
-`navigation_constraint` 快照，便于独立调试。
+`resume` 没有新的 `command_seq`，因此 Task3 清除禁行区并恢复原任务后，再次使用保存的
+`TASK4_BEGIN.command_seq` 返回同一个 `IncidentAck`。重复的 `resume` 只重复 ACK，不会重复
+恢复或清除任务进度。旧的 `TASK4_KEEP_OUT_ZONE`、`TASK4_ALL_CLEAR` 和已经转换成 NED 的
+内部 `navigation_constraint` 仍仅用于独立调试。
 
 ## 当前边界与调试
 
@@ -104,7 +115,7 @@ AllClear 只移除导航约束，不恢复 Core、不清重试次数、不重新
 `keep_out_suspended_state` 会标出因 Dock 上禁行区而暂停的原状态。
 同时生成独立的 `keep_out_checkpoint_id`；存档包含中断前步骤、Bay/Window、入口
 布局、喷水完成标志、活动 Bay 和重试次数。它不覆盖 Task4 Core 的
-`core_checkpoint`，AllClear 恢复处理完成后才清除。
+`core_checkpoint`，`resume` 恢复处理完成后才清除。
 
 - `WAIT_RTK_ORIGIN_FOR_KEEP_OUT`：缺少共享 RTK 原点，禁止继续旧路线。
 - `WAIT_TASK3_GEOFENCE_FOR_KEEP_OUT_EXIT`：已知船在圈内，但还没有安全边界。

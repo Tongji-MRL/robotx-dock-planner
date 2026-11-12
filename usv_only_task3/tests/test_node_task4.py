@@ -31,7 +31,7 @@ class Task4NodeTests(unittest.TestCase):
         self.node = UsvOnlyTask3Executor()
         # Capture output without putting test targets onto ROS topics.
         for name in ('progress_pub', 'preview_pub', 'goto_pub', 'state_pub',
-                     'checkpoint_pub', 'release_pub', 'mode_pub'):
+                     'checkpoint_pub', 'release_pub', 'mode_pub', 'result_pub'):
             setattr(self.node, name, Recorder())
         now = time.time()
         self.node.manager.begin((NEDPoint(0, 0, 0), NEDPoint(20, 0, 0),
@@ -72,6 +72,49 @@ class Task4NodeTests(unittest.TestCase):
                    'parameters': {'official_command_seq': 2, 'vehicle_type': 1}})
         self.assertEqual(self.node.manager.state, before)
         self.assertIsNotNone(self.node.manager.current_goal)
+
+    def test_agreed_task4_begin_and_resume_apply_zone_and_ack_twice(self):
+        before = self.node.manager.state
+        self.send({
+            'vehicle': 'usv', 'task': 'TASK4', 'progress': None, 'error': None,
+            'command': {
+                'type': 'TASK4_BEGIN', 'command_seq': 100,
+                'center': {'latitude': 31.00001, 'longitude': 121.00001},
+                'radius_m': 5.0, 'vehicle_type': 'USV',
+            },
+        })
+        self.assertEqual(self.node.manager.state, before)
+        self.assertIsNotNone(self.node.manager.navigation_constraint.zone)
+        self.assertEqual(json.loads(self.node.result_pub.messages[-1].data), {
+            'incident_ack': {'command_seq': 100},
+        })
+
+        self.send({
+            'vehicle': 'usv', 'task': 'TASK4', 'progress': None, 'error': None,
+            'command': 'resume',
+        })
+        self.assertIsNone(self.node.manager.navigation_constraint.zone)
+        self.assertEqual(len(self.node.result_pub.messages), 2)
+        self.assertEqual(json.loads(self.node.result_pub.messages[-1].data), {
+            'incident_ack': {'command_seq': 100},
+        })
+
+        # A delayed duplicate BEGIN is acknowledged but must not recreate the
+        # already-cleared keep-out zone.
+        self.send({
+            'vehicle': 'usv', 'task': 'TASK4',
+            'command': {
+                'type': 'TASK4_BEGIN', 'command_seq': 100,
+                'center': {'latitude': 31.00001, 'longitude': 121.00001},
+                'radius_m': 5.0, 'vehicle_type': 'USV',
+            },
+        })
+        self.assertIsNone(self.node.manager.navigation_constraint.zone)
+        self.assertEqual(len(self.node.result_pub.messages), 3)
+
+    def test_task4_resume_before_begin_is_rejected_without_ack(self):
+        self.send({'vehicle': 'usv', 'task': 'TASK4', 'command': 'resume'})
+        self.assertEqual(self.node.result_pub.messages, [])
 
     def test_invalid_constraint_stops_new_targets(self):
         self.node._on_navigation_constraint(String(data=json.dumps({'run_id': 1})))

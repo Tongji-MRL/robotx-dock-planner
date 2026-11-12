@@ -84,7 +84,7 @@ Task3 将第一角作为本轮本地 NED 原点，并用 Orin 本机 MAVROS 的 
 | Topic | 类型 | 内容 |
 |---|---|---|
 | `/tongji_mrl/twave/progress` | String JSON | 只包含主状态机需要的 `vehicle/task/progress/error` |
-| `/tongji_mrl/twave/result` | String JSON | 入坞稳定后发布 `DockingReport`；喷水验证完成后发布 `FirefightingReport` |
+| `/tongji_mrl/twave/result` | String JSON | `DockingReport`、`FirefightingReport`，以及 Task4 开始/恢复时的 `IncidentAck` |
 | `/tongji_mrl/twave/task3/goto_preview` | String JSON | NED 高层目标预览 |
 | `/safe_passage/goto/target` | `geometry_msgs/PointStamped` | 本地 `map`/ENU 目标；仅关闭 dry-run、启用输出且 NED/odom 样本同步时发布 |
 | `/safe_passage/goto/cancel` | Bool | 暂停、ABORT、错误或控制释放时取消旧目标；控制器用 `ABORTED` 状态确认 |
@@ -124,6 +124,14 @@ Bay 内停车稳定后另行发布：
 {"team_id":"TONG","vehicle_id":"usv","seq":2,
  "sent_at":"2026-10-17T10:15:00Z","firefighting":{"window_id":1}}
 ```
+
+收到带圆形禁行区的 Task4 开始命令，以及随后不带新序号的 `resume` 时，分别发布一次：
+
+```json
+{"incident_ack":{"command_seq":100}}
+```
+
+恢复 ACK 复用首次 `TASK4_BEGIN.command_seq`。
 
 每条 result 只含一种报告主体。主状态机应转发 result，并以
 `progress=FINISHED` 判定整个 Task 3 完成。窗口左右无法稳定判断时使用配置的合法

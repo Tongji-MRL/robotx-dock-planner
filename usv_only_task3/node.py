@@ -153,6 +153,9 @@ class UsvOnlyTask3Executor(Node):
         self._mavros_fix_timestamp: float | None = None
         self._mavros_heading_ned: float | None = None
         self._mavros_connected = False
+        self._active_task4_command_seq: int | None = None
+        self._last_task4_command_seq: int | None = None
+        self._active_task4_run_id: int | None = None
         self._last_state = None
         self._last_goal = None
         self._goal_running = False
@@ -263,7 +266,39 @@ class UsvOnlyTask3Executor(Node):
                 else:
                     raise ValueError("TASK4 command must be a string or object")
                 if kind == "TASK4_BEGIN":
-                    self._pause_core(now)
+                    if not any(
+                        key in command for key in ("command_seq", "center", "radius_m")
+                    ):
+                        # Retain the older Task4 Core checkpoint handshake.  It
+                        # has no keep-out geometry or official command sequence.
+                        self._pause_core(now)
+                        self._publish()
+                        return
+                    command_seq = command.get("command_seq")
+                    if (isinstance(command_seq, bool)
+                            or not isinstance(command_seq, int)
+                            or command_seq < 1):
+                        raise ValueError("TASK4_BEGIN command_seq must be a positive integer")
+                    if (self._last_task4_command_seq is not None
+                            and command_seq < self._last_task4_command_seq):
+                        raise ValueError("TASK4_BEGIN command_seq is older than the last command")
+                    if (self._active_task4_command_seq is None
+                            and command_seq == self._last_task4_command_seq):
+                        # A delayed duplicate after resume must not reactivate
+                        # a zone which has already been cleared.
+                        self._publish_incident_ack(command_seq)
+                        self._publish()
+                        return
+                    accepted = self._accept_keep_out(command, value, now=now)
+                    if accepted is None:
+                        return
+                    run_id, _revision = accepted
+                    self._active_task4_command_seq = command_seq
+                    self._last_task4_command_seq = command_seq
+                    self._active_task4_run_id = run_id
+                    self._last_goal = None
+                    self._goal_running = False
+                    self._publish_incident_ack(command_seq)
                 elif kind in {"TASK4_KEEP_OUT", "TASK4_KEEP_OUT_ZONE"}:
                     self._accept_keep_out(command, value, now=now)
                     self._last_goal = None
@@ -272,6 +307,27 @@ class UsvOnlyTask3Executor(Node):
                     self._apply_all_clear(command, value, now=now)
                     self._last_goal = None
                     self._goal_running = False
+                elif kind in {"RESUME", "TASK4_RESUME"}:
+                    command_seq = (
+                        self._active_task4_command_seq
+                        if self._active_task4_command_seq is not None
+                        else self._last_task4_command_seq
+                    )
+                    if command_seq is None:
+                        raise ValueError("TASK4 resume received before TASK4_BEGIN")
+                    if self._active_task4_command_seq is not None:
+                        resume_command = {
+                            "run_id": self._active_task4_run_id or 1,
+                            "vehicle_type": "USV",
+                        }
+                        self._apply_all_clear(resume_command, {}, now=now)
+                        self._last_goal = None
+                        self._goal_running = False
+                        self._active_task4_command_seq = None
+                        self._active_task4_run_id = None
+                    # Resume carries no new sequence in the agreed interface,
+                    # so acknowledge it with the TASK4_BEGIN sequence.
+                    self._publish_incident_ack(command_seq)
                 else:
                     return
                 self._publish()
@@ -348,9 +404,11 @@ class UsvOnlyTask3Executor(Node):
             revision = supplied
         return run_id, revision
 
-    def _accept_keep_out(self, command: dict, envelope: dict, *, now: float) -> None:
+    def _accept_keep_out(
+        self, command: dict, envelope: dict, *, now: float
+    ) -> tuple[int, int] | None:
         if not self._is_usv_vehicle_type(command.get("vehicle_type")):
-            return
+            return None
         center = command.get("center")
         radius = _number(command.get("radius_m"), "radius_m")
         if not isinstance(center, dict) or radius <= 0.0:
@@ -365,8 +423,18 @@ class UsvOnlyTask3Executor(Node):
         self._pending_keep_out = pending
         if self._rtk_origin is None:
             self.manager.hold_navigation("WAIT_RTK_ORIGIN_FOR_KEEP_OUT", now=now)
-            return
+            return run_id, revision
         self._apply_pending_keep_out(now=now)
+        return run_id, revision
+
+    def _publish_incident_ack(self, command_seq: int) -> None:
+        """Return the exact report body forwarded by the main FSM to OCS."""
+
+        message = String()
+        message.data = json.dumps({
+            "incident_ack": {"command_seq": command_seq},
+        }, separators=(",", ":"))
+        self.result_pub.publish(message)
 
     def _apply_pending_keep_out(self, *, now: float) -> None:
         if self._pending_keep_out is None or self._rtk_origin is None:
@@ -722,6 +790,12 @@ class UsvOnlyTask3Executor(Node):
         if self.manager.current_goal is not None:
             self.manager.guard_current_goal(now=time.time())
         status = self.manager.status()
+        status["task4_command_seq"] = (
+            self._active_task4_command_seq
+            if self._active_task4_command_seq is not None
+            else self._last_task4_command_seq
+        )
+        status["task4_keep_out_active"] = self._active_task4_command_seq is not None
         diagnostic = String()
         diagnostic.data = json.dumps(status, separators=(",", ":"))
         self.state_pub.publish(diagnostic)
@@ -734,7 +808,7 @@ class UsvOnlyTask3Executor(Node):
                         "keep_out_detour_side", "keep_out_detour_waypoints_remaining",
                         "keep_out_inside_official_zone", "keep_out_inside_protected_zone",
                         "keep_out_suspended_state", "keep_out_checkpoint_id",
-                        "keep_out_mode"):
+                        "keep_out_mode", "task4_command_seq", "task4_keep_out_active"):
                 report[key] = status[key]
             progress.data = json.dumps(report, separators=(",", ":"))
             self.progress_pub.publish(progress)

@@ -45,7 +45,7 @@
 | `/tongji_mrl/twave/progress` | adapter → FSM | 状态/窗口变化时 | `vehicle/task/progress/error` JSON |
 | `/tongji_mrl/twave/task3/correct_bay` | Task3 流程 → adapter | bay 确认/靠泊确认时 | 正确泊位权威输入 |
 | `/tongji_mrl/twave/task3/sprayer_window` | 喷水流程 → adapter | 窗口状态变化时 | RED/GREEN、泵状态、绿色确认时长 |
-| `/tongji_mrl/twave/result` | adapter → FSM | 权威完成事件 | docking/firefighting result JSON |
+| `/tongji_mrl/twave/result` | adapter → FSM | 权威事件 | docking/firefighting result 或 Task4 `incident_ack` JSON |
 | `/tongji_mrl/twave/checkpoint` | Task3 流程 → FSM | Task4 抢占前 | 当前任务断点 |
 | `/tongji_mrl/twave/heartbeat` | USV 状态机 → adapter | 2 Hz | T-Wave 车辆 heartbeat |
 | `/tongji_mrl/tsky/heartbeat` | UAV 状态机 → adapter | 2 Hz | T-Sky 车辆 heartbeat |
@@ -289,11 +289,27 @@ Task4 使用：
   "command": {
     "type": "TASK4_BEGIN",
     "command_seq": 17,
-    "target_vehicle": "usv",
-    "position": {"frame_id": "ned", "north": 1.0, "east": 2.0}
+    "center": {"latitude": 31.00001, "longitude": 121.00001},
+    "radius_m": 500.0,
+    "vehicle_type": "USV"
   }
 }
 ```
+
+USV 接受后在 `/tongji_mrl/twave/result` 返回：
+
+```json
+{"incident_ack":{"command_seq":17}}
+```
+
+Task4 结束时主状态机发送：
+
+```json
+{"vehicle":"usv","task":"TASK4","progress":null,"error":null,"command":"resume"}
+```
+
+USV 清除禁行区并恢复原 Task3 后，再用保存的 `command_seq=17` 返回一次同样的
+`IncidentAck`。`resume` 本身不携带新序号。
 
 总规划器发送 `command="end"` 时，Task3 adapter 将其转换为 `SAFE_STOP`，并回传
 `TASK3_END_ACK`。这不是 `FINISHED`：子状态机需要先取消当前导航、关闭水泵、停止云台，
@@ -302,9 +318,9 @@ Task4 使用：
 Task3 的 `begin`、`resume`、`end` 分别映射到内部的开始、恢复和安全停止命令。首次有效
 命令被转发到 `/tongji_mrl/twave/task3/control_command`；重复的 FSM 命令不重复转发。
 
-Task4 到达目标后，Task3 必须保持 `WAIT_RESUME`。只有总规划器选择继续 Task3 并向
-`/tongji_mrl/twave/task_cmd` 下发 `task=TASK3, command=resume` 后才恢复；恢复时携带
-checkpoint 的 `progress` 字段。总规划器选择 Task1 时，Task3 checkpoint 保留，Task3 不自行恢复。
+禁行区在 Dock 操作期间触发时，Task3 保存 Dock 进度、退出禁区并等待上述 Task4
+`resume`；恢复后重新验证 Dock 和瞄准结果，不能沿用旧结果直接续喷。圈外航行则把
+禁行区作为持续约束进行绕行。
 
 ## 8. 构建和 dry-run 联调
 

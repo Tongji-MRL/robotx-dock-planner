@@ -184,6 +184,18 @@ class Task3CommunicationAdapter(Node):
     def _on_task_command(self, msg: String) -> None:
         try:
             raw = decode_json_object(msg.data)
+            # The USV-only executor owns the agreed Task4 keep-out contract and
+            # publishes the exact IncidentAck body on /tongji_mrl/twave/result.
+            # Do not let this legacy adapter emit a second, incompatible ACK.
+            if str(raw.get("task", "")).upper() == "TASK4":
+                command = raw.get("command")
+                if command == "resume" or (
+                    isinstance(command, Mapping)
+                    and str(command.get("type", "")).upper() == "TASK4_BEGIN"
+                    and "center" in command
+                    and "radius_m" in command
+                ):
+                    return
             command = normalize_fsm_task_command(raw)
         except (TypeError, ValueError) as exc:
             self.get_logger().warning(f"Rejecting invalid Task3 command: {exc}")
