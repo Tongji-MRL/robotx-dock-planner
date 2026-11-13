@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start Task 3 in dependency order inside a visible tmux session.
+# Start Task 3 in dependency order inside one managed tmux session.
 set -euo pipefail
 
 workspace_path="${ROBOTX_WS:-/home/robotx/robotx_ws}"
@@ -46,12 +46,27 @@ has_publisher() {
         grep -q 'Publisher count: [1-9]'
 }
 
-for existing_topic in /livox/lidar /mavros/state /fast_lio/cloud_registered_body; do
+for existing_topic in /livox/lidar /fast_lio/cloud_registered_body; do
     if has_publisher "$existing_topic"; then
         echo "Existing publisher found on $existing_topic; stop the old stack first." >&2
         exit 1
     fi
 done
+
+# MAVROS is a platform service and may remain alive while the state machine
+# switches from Task 1 to Task 3.  Reuse it only after receiving an explicit
+# connected=true state; a stale or disconnected publisher must not be trusted.
+reuse_mavros=false
+if has_publisher /mavros/state; then
+    if timeout 8 ros2 topic echo /mavros/state --once --field connected \
+        --qos-reliability reliable 2>/dev/null | grep -qx 'true'; then
+        reuse_mavros=true
+        echo "Existing connected MAVROS found; reusing the platform service."
+    else
+        echo "Existing /mavros/state publisher is not reporting connected=true." >&2
+        exit 1
+    fi
+fi
 
 wait_for_stream() {
     local topic="$1"
@@ -82,8 +97,12 @@ tmux new-session -d -s "$session_name" -n obstacle \
 wait_for_stream /livox/lidar 30
 wait_for_stream /mavros/obstacle/send 30
 
-open_window mavros "$ros_setup && exec ros2 run mavros mavros_node --ros-args -p fcu_url:='$fcu_url'"
-wait_for_stream /mavros/state 30
+if [[ "$reuse_mavros" == true ]]; then
+    wait_for_stream /mavros/state 10
+else
+    open_window mavros "$ros_setup && exec ros2 run mavros mavros_node --ros-args -p fcu_url:='$fcu_url'"
+    wait_for_stream /mavros/state 30
+fi
 
 open_window fastlio "$ros_setup && exec ros2 launch fast_lio task3_mid360.launch.py"
 wait_for_stream /fast_lio/cloud_registered_body 45
@@ -100,4 +119,7 @@ open_window monitor "$ros_setup && while true; do clear; date -Ins; ros2 node li
 
 tmux select-window -t "$session_name:task3"
 echo "Task3 started in stages. Detach with Ctrl-b d; stop with: tmux kill-session -t $session_name"
-exec tmux attach -t "$session_name"
+if [[ -t 0 && -t 1 ]]; then
+    exec tmux attach -t "$session_name"
+fi
+echo "Task3 is running in detached tmux session: $session_name"
