@@ -66,9 +66,60 @@ wait_for_publisher_gone() {
     echo "Previous publisher released $topic."
 }
 
+stop_known_sensor_process() {
+    local topic="$1"
+    local pattern=""
+    local label=""
+    local -a pids=()
+
+    case "$topic" in
+        /livox/lidar)
+            pattern="$workspace_path/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node"
+            label="Livox driver"
+            ;;
+        /fast_lio/cloud_registered_body)
+            pattern="/fast_lio/.*/fastlio_mapping"
+            label="FAST-LIO"
+            ;;
+        *)
+            echo "No bounded restart rule is defined for $topic." >&2
+            return 1
+            ;;
+    esac
+
+    mapfile -t pids < <(pgrep -f -- "$pattern" || true)
+    if (( ${#pids[@]} == 0 )); then
+        echo "No known $label process owns the remaining publisher on $topic." >&2
+        return 1
+    fi
+
+    echo "Stopping stale $label process(es): ${pids[*]}"
+    kill -TERM "${pids[@]}" 2>/dev/null || true
+    local deadline=$((SECONDS + 5))
+    while (( SECONDS < deadline )); do
+        local alive=false
+        local pid
+        for pid in "${pids[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                alive=true
+                break
+            fi
+        done
+        [[ "$alive" == false ]] && return 0
+        sleep 0.2
+    done
+
+    echo "$label did not stop after SIGTERM; sending SIGKILL."
+    kill -KILL "${pids[@]}" 2>/dev/null || true
+}
+
 for existing_topic in /livox/lidar /fast_lio/cloud_registered_body; do
     if ! wait_for_publisher_gone "$existing_topic" 20; then
-        exit 1
+        if has_publisher "$existing_topic"; then
+            echo "Attempting one bounded restart of the stale sensor process."
+            stop_known_sensor_process "$existing_topic" || exit 1
+            wait_for_publisher_gone "$existing_topic" 10 || exit 1
+        fi
     fi
 done
 
