@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Start Task 3 in dependency order inside one managed tmux session.
-set -euo pipefail
+# ROS Humble's generated setup files read a few optional variables before
+# assigning them, so nounset must be enabled only after both overlays load.
+set -eo pipefail
 
 workspace_path="${ROBOTX_WS:-/home/robotx/robotx_ws}"
 session_name="${TASK3_TMUX_SESSION:-robotx_task3}"
@@ -35,6 +37,7 @@ command -v tmux >/dev/null || {
 
 source /opt/ros/humble/setup.bash
 source "$workspace_path/install/setup.bash"
+set -u
 
 # The platform stack and OCS use Domain 62.  VS Code and non-interactive SSH
 # shells do not consistently inherit the team's ROS environment, so make the
