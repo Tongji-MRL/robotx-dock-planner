@@ -179,6 +179,8 @@ class UsvOnlyTask3FlowManager:
         self._bay_observation_ready = False
         self.bay_id: int | None = None
         self.window_id: int | None = None
+        self.bay_fallback_used = False
+        self.bay_fallback_reason: str | None = None
         self._resume_state: UsvOnlyTask3State | None = None
         self._retry_state: UsvOnlyTask3State | None = None
         self._retry_counts: dict[UsvOnlyTask3State, int] = {}
@@ -475,8 +477,36 @@ class UsvOnlyTask3FlowManager:
             self._bay_observation_ready = False
             self.state_entered_at = now
             return False
-        self._retry_or_fail(UsvOnlyTask3State.INSPECT_BAYS, "SAFE_BAY_NOT_CONFIRMED", now)
-        return False
+        return self._enter_current_bay_fallback(
+            now=now,
+            reason="ALL_BAYS_INSPECTED_WITHOUT_GREEN",
+        )
+
+    def _enter_current_bay_fallback(self, *, now: float, reason: str) -> bool:
+        """Enter a known geometric bay when semantic selection is exhausted.
+
+        This is intentionally unavailable before a stable three-entrance layout
+        and arrival at the current observation pose.  It guesses only whether
+        the bay is the scoring bay; it never guesses an entrance pose.
+        """
+
+        if (
+            self.layout is None
+            or not self.layout.bays
+            or not self._bay_observation_ready
+            or not 0 <= self._active_bay_index < len(self.layout.bays)
+        ):
+            return False
+        self.bay_id = self.layout.bays[self._active_bay_index].bay_id
+        self.bay_fallback_used = True
+        self.bay_fallback_reason = reason
+        self._bay_observation_ready = False
+        self._enter(
+            UsvOnlyTask3State.ENTER_BAY,
+            now,
+            f"BEST_EFFORT_BAY_FALLBACK:{reason}",
+        )
+        return True
 
     def hold_confirmed(self, *, now: float) -> None:
         if self.navigation_hold_reason:
@@ -565,6 +595,14 @@ class UsvOnlyTask3FlowManager:
         attempt = self._retry_counts.get(failed_state, 0) + 1
         self._retry_counts[failed_state] = attempt
         if attempt > self.config.max_retries_per_state:
+            if (
+                failed_state is UsvOnlyTask3State.INSPECT_BAYS
+                and self._enter_current_bay_fallback(
+                    now=now,
+                    reason=f"{reason}:RETRY_LIMIT_EXHAUSTED",
+                )
+            ):
+                return
             self.fail(f"{reason}: retry limit exhausted", now)
             return
         self._retry_state = (
@@ -875,6 +913,8 @@ class UsvOnlyTask3FlowManager:
             "detail": self.detail,
             "error": self.error,
             "bay_id": self.bay_id,
+            "bay_fallback_used": self.bay_fallback_used,
+            "bay_fallback_reason": self.bay_fallback_reason,
             "window_id": self.window_id,
             "search_pass": self._search_pass,
             "search_line": self._line_index + 1,

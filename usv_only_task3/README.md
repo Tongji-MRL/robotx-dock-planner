@@ -28,7 +28,7 @@
 | `SEARCH_SECONDARY` | 主线无结果 | 三入口稳定或备用线结束 | 300 s | 有限整轮重试，耗尽 `ERROR` |
 | `VERIFY_DOCK` | 三入口多帧稳定 | 默认自动通过结构验证 | 15 s | 结构无效或超时后 `RETRY`，耗尽 `ERROR` |
 | `APPROACH_DOCK` | 布局验证 | 到首个 Bay 观察位 | 120 s | `RETRY`，耗尽 `ERROR` |
-| `INSPECT_BAYS` | 到观察位 | 控制器确认到达后，高置信绿色 Bay | 120 s | 换观察位；未到新观察位时忽略颜色；全部失败后有限重试 |
+| `INSPECT_BAYS` | 到观察位 | 控制器确认到达后，高置信绿色 Bay | 120 s | 换观察位；未到新观察位时忽略颜色；颜色判断最终失败时进入当前已确认几何的 Bay 并按其左到右 ID 尽力报告 |
 | `ENTER_BAY` | 目标 Bay 确认 | 控制器 `DONE` | 120 s | `RETRY`，耗尽 `ERROR` |
 | `HOLD_POSITION` | 到 Bay 内停车点 | 停稳确认 | 20 s | `RETRY`，耗尽 `ERROR` |
 | `AIM_WINDOW` | 停稳 | 云台 ready | 90 s | `RETRY`，耗尽 `ERROR` |
@@ -147,6 +147,11 @@ Bay 内停车稳定后另行发布：
 `progress=FINISHED` 判定整个 Task 3 完成。窗口左右无法稳定判断时使用配置的合法
 fallback ID（默认 1），不会因此永久卡住。`report_seq_start` 用于与整车公共报告序号衔接；
 如果公共通信节点统一分配序号，应由该节点覆盖此参数。
+
+Bay 选择也有尽力保底：只有三入口布局已经稳定且船已到达当前 Bay 观察位时，若全部
+Bay 都未识别出绿色，或 `INSPECT_BAYS` 重试耗尽，系统才进入当前 Bay，并报告该 Bay
+按 Dock 左到右排序得到的实际 ID。该保底只猜“哪个 Bay 正确”，不会在入口几何未知时
+盲目生成进坞航点。
 
 当前另一个 `FSM` 仓库的 `mission_planner_node.py` 仍同时等待 UAV 和 USV 两条
 `FINISHED`。在 USV-only 比赛配置中，主状态机还必须改为只等待 USV，或显式配置

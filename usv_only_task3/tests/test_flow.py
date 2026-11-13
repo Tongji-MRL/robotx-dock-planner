@@ -129,6 +129,47 @@ class UsvOnlyFlowTests(unittest.TestCase):
         self.assertTrue(manager.accept_bay_color("GREEN", 0.9, now=6.1))
         self.assertEqual(manager.bay_id, 2)
 
+    def test_all_non_green_bays_enter_current_bay_as_best_effort_fallback(self):
+        manager = self.make_manager()
+        self.begin(manager)
+        manager.navigation_reached(now=1.0)
+        manager.accept_dock_frame(self.stable_frame(1.0), Pose2D(0, 5, 0), now=1.0)
+        manager.accept_dock_frame(self.stable_frame(2.0), Pose2D(0, 5, 0), now=2.0)
+        manager.dock_verified(now=3.0)
+        manager.navigation_reached(now=4.0)
+
+        self.assertFalse(manager.accept_bay_color("RED", 0.9, now=5.0))
+        manager.navigation_reached(now=6.0)
+        self.assertFalse(manager.accept_bay_color("RED", 0.9, now=7.0))
+        manager.navigation_reached(now=8.0)
+        self.assertTrue(manager.accept_bay_color("RED", 0.9, now=9.0))
+
+        self.assertEqual(manager.state, UsvOnlyTask3State.ENTER_BAY)
+        self.assertEqual(manager.bay_id, 3)
+        self.assertTrue(manager.status()["bay_fallback_used"])
+        self.assertIn("ALL_BAYS_INSPECTED", manager.status()["bay_fallback_reason"])
+        self.assertIsNotNone(manager.current_goal)
+
+    def test_bay_timeout_exhaustion_falls_back_only_after_observation_arrival(self):
+        timeouts = {
+            UsvOnlyTask3State.INSPECT_BAYS: 1.0,
+            UsvOnlyTask3State.RETRY: 1.0,
+        }
+        manager = self.make_manager(max_retries_per_state=0, state_timeouts_s=timeouts)
+        self.begin(manager)
+        manager.navigation_reached(now=1.0)
+        manager.accept_dock_frame(self.stable_frame(1.0), Pose2D(0, 5, 0), now=1.0)
+        manager.accept_dock_frame(self.stable_frame(2.0), Pose2D(0, 5, 0), now=2.0)
+        manager.dock_verified(now=3.0)
+        manager.navigation_reached(now=4.0)
+
+        manager.update_health(health(5.1), Pose2D(0, 5, 0), now=5.1)
+        manager.tick(now=5.1)
+
+        self.assertEqual(manager.state, UsvOnlyTask3State.ENTER_BAY)
+        self.assertEqual(manager.bay_id, 1)
+        self.assertTrue(manager.status()["bay_fallback_used"])
+
     def test_dock_stability_does_not_mix_frames_between_search_stations(self):
         manager = self.make_manager()
         self.begin(manager)
