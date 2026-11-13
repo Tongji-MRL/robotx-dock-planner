@@ -118,6 +118,12 @@ def generate_launch_description():
         }],
     )
 
+    usv_only_contract_adapter = Node(
+        package="usv_task3_executor",
+        executable="task3_usv_only_contract_adapter",
+        output="screen",
+    )
+
     communication = _include(
         "usv_task3_executor",
         "task3_communication_adapter.launch.py",
@@ -215,6 +221,7 @@ def generate_launch_description():
         window_stack,
         bay_indicator,
         vision_contract_adapter,
+        usv_only_contract_adapter,
         communication,
         goto,
         avoidance_monitor,

@@ -59,6 +59,12 @@
 | `/tongji_mrl/twave/task3/gimbal_ready` | String JSON | `ready`、可选 `window_id` 1/2 |
 | `/tongji_mrl/twave/task3/spray_complete` | Bool | 完整执行“红灯、瞄准、喷水、绿灯、停泵、绿色稳定 5 秒”后才可置 true |
 
+比赛 launch 会自动启动 `task3_usv_only_contract_adapter`，将现有正式节点的
+`/robotx/perception/leds`、MAVROS odom、`/gimbal/status` 和已验证的
+`/tongji_mrl/twave/task3/sprayer_window` 分别转换为 Bay 观察、停稳确认、云台锁定和
+喷水完成输入。停稳后它还持续发布 `/robotx/task3/docked_confirmed=true`，放行正式窗口
+识别；Task4 禁行区生效时立即撤销该放行且不产生新的完成事件。
+
 启动 launch 后，Task3 自动进入 `WAIT_INPUTS`；收到课程配置、MAVROS GPS、MAVROS
 odom 和已连接的 FCU 后自动开始搜索，不需要 Task3 `START` 命令。主状态机只需原样转发
 官方 `/tongji_mrl/twave/course_config`，例如：

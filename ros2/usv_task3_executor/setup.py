@@ -37,6 +37,7 @@ setup(
             "task3_communication_adapter = usv_task3_executor.communication_adapter:main",
             "task3_ned_pose_adapter = usv_task3_executor.ned_pose_adapter:main",
             "task3_vision_contract_adapter = usv_task3_executor.vision_contract_adapter:main",
+            "task3_usv_only_contract_adapter = usv_task3_executor.usv_only_contract_adapter:main",
             "usv_reactive_avoidance = usv_task3_executor.reactive_avoidance_node:main",
         ]
     },
