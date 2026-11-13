@@ -36,6 +36,17 @@ command -v tmux >/dev/null || {
 source /opt/ros/humble/setup.bash
 source "$workspace_path/install/setup.bash"
 
+# The platform stack and OCS use Domain 62.  VS Code and non-interactive SSH
+# shells do not consistently inherit the team's ROS environment, so make the
+# competition launcher self-contained.
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-62}"
+export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-0}"
+export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+export FASTDDS_BUILTIN_TRANSPORTS="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
+export SKIP_DEFAULT_XML="${SKIP_DEFAULT_XML:-1}"
+unset FASTRTPS_DEFAULT_PROFILES_FILE
+unset FASTDDS_DEFAULT_PROFILES_FILE
+
 if tmux has-session -t "$session_name" 2>/dev/null; then
     echo "Task3 session already exists: tmux attach -t $session_name" >&2
     exit 1
@@ -127,15 +138,13 @@ done
 # switches from Task 1 to Task 3.  Reuse it only after receiving an explicit
 # connected=true state; a stale or disconnected publisher must not be trusted.
 reuse_mavros=false
-if has_publisher /mavros/state; then
-    if timeout 8 ros2 topic echo /mavros/state --once --field connected \
-        --qos-reliability reliable 2>/dev/null | grep -qx 'true'; then
-        reuse_mavros=true
-        echo "Existing connected MAVROS found; reusing the platform service."
-    else
-        echo "Existing /mavros/state publisher is not reporting connected=true." >&2
-        exit 1
-    fi
+if timeout 8 ros2 topic echo /mavros/state --once --field connected \
+    --qos-reliability reliable 2>/dev/null | grep -Eiq '^true$'; then
+    reuse_mavros=true
+    echo "Existing connected MAVROS found; reusing the platform service."
+elif has_publisher /mavros/state; then
+    echo "Existing /mavros/state publisher is not reporting connected=true." >&2
+    exit 1
 fi
 
 wait_for_stream() {
@@ -160,7 +169,7 @@ open_window() {
     tmux new-window -t "$session_name:" -n "$name" "bash -lc $quoted"
 }
 
-ros_setup="source /opt/ros/humble/setup.bash && source '$workspace_path/install/setup.bash'"
+ros_setup="source /opt/ros/humble/setup.bash && source '$workspace_path/install/setup.bash' && export ROS_DOMAIN_ID='$ROS_DOMAIN_ID' ROS_LOCALHOST_ONLY='$ROS_LOCALHOST_ONLY' RMW_IMPLEMENTATION='$RMW_IMPLEMENTATION' FASTDDS_BUILTIN_TRANSPORTS='$FASTDDS_BUILTIN_TRANSPORTS' SKIP_DEFAULT_XML='$SKIP_DEFAULT_XML' && unset FASTRTPS_DEFAULT_PROFILES_FILE FASTDDS_DEFAULT_PROFILES_FILE"
 
 tmux new-session -d -s "$session_name" -n obstacle \
     "bash -lc $(printf '%q' "$ros_setup && exec '$HOME/start_obstacle_stack.sh' start")"
