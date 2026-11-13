@@ -46,9 +46,28 @@ has_publisher() {
         grep -q 'Publisher count: [1-9]'
 }
 
+wait_for_publisher_gone() {
+    local topic="$1"
+    local timeout_s="$2"
+    local deadline=$((SECONDS + timeout_s))
+
+    if ! has_publisher "$topic"; then
+        return 0
+    fi
+
+    echo "Waiting up to ${timeout_s}s for the previous stack to release $topic ..."
+    while has_publisher "$topic"; do
+        if (( SECONDS >= deadline )); then
+            echo "Previous publisher on $topic did not stop within ${timeout_s}s." >&2
+            return 1
+        fi
+        sleep 1
+    done
+    echo "Previous publisher released $topic."
+}
+
 for existing_topic in /livox/lidar /fast_lio/cloud_registered_body; do
-    if has_publisher "$existing_topic"; then
-        echo "Existing publisher found on $existing_topic; stop the old stack first." >&2
+    if ! wait_for_publisher_gone "$existing_topic" 20; then
         exit 1
     fi
 done
