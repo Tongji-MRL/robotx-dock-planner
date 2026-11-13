@@ -48,6 +48,7 @@ def generate_launch_description():
             "unseeded_min_entrances": LaunchConfiguration(
                 "unseeded_min_entrances"
             ),
+            "pose_timeout_s": LaunchConfiguration("pose_timeout_s"),
         }.items(),
     )
 
@@ -67,6 +68,7 @@ def generate_launch_description():
         DeclareLaunchArgument("local_lateral_half_width_m", default_value="15.0"),
         DeclareLaunchArgument("unseeded_required_detections", default_value="3"),
         DeclareLaunchArgument("unseeded_min_entrances", default_value="3"),
+        DeclareLaunchArgument("pose_timeout_s", default_value="3.0"),
         fast_lio,
         perception,
     ])

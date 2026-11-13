@@ -98,7 +98,7 @@ class UsvOnlyTask3Executor(Node):
         self.declare_parameter("dry_run", True)
         self.declare_parameter("enable_goto_output", False)
         self.declare_parameter("required_ned_frame_id", "robotx_rtk_ned")
-        self.declare_parameter("pose_timeout_s", 2.0)
+        self.declare_parameter("pose_timeout_s", 3.0)
         self.declare_parameter("max_retries_per_state", 2)
         self.declare_parameter("max_search_passes", 2)
         # Three metres keeps the default course search and keep-out decisions
@@ -118,7 +118,7 @@ class UsvOnlyTask3Executor(Node):
         self.declare_parameter("goto_status_topic", "/safe_passage/goto/status")
         self.declare_parameter("goto_odom_topic", "/mavros/local_position/odom")
         self.declare_parameter("goto_frame_id", "map")
-        self.declare_parameter("goto_max_reference_skew_s", 0.2)
+        self.declare_parameter("goto_max_reference_skew_s", 0.5)
         self.declare_parameter("goto_cancel_topic", "/safe_passage/goto/abort")
         self.declare_parameter("mavros_global_fix_topic", "/mavros/global_position/global")
         self.declare_parameter(

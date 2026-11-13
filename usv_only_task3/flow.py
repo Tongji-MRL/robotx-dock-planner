@@ -98,7 +98,11 @@ def _default_timeouts() -> dict[UsvOnlyTask3State, float]:
 @dataclass(frozen=True)
 class UsvOnlyTask3Config:
     required_frame_id: str = "robotx_rtk_ned"
-    pose_timeout_s: float = 2.0
+    # Allow bounded ROS scheduling and perception-pipeline jitter while the
+    # vessel is stopped at a search station.  Values beyond three seconds are
+    # unsafe for navigation because even a slowly moving USV accumulates a
+    # material position error.
+    pose_timeout_s: float = 3.0
     max_retries_per_state: int = 2
     max_search_passes: int = 2
     bay_entry_depth_m: float = 1.0

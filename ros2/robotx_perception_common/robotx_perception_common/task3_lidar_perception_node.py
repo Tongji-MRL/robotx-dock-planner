@@ -76,7 +76,7 @@ class Task3LidarPerceptionNode(Node):
         self.declare_parameter("output_topic", "/tongji_mrl/twave/task3/dock_perception")
         self.declare_parameter("process_period_s", 0.5)
         self.declare_parameter("coarse_timeout_s", 30.0)
-        self.declare_parameter("pose_timeout_s", 2.0)
+        self.declare_parameter("pose_timeout_s", 3.0)
         self.declare_parameter("roi_radius_m", 25.0)
         self.declare_parameter("min_confidence", 0.20)
         self.declare_parameter("detector_mode", "seeded_lines")

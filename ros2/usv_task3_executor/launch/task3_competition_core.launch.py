@@ -170,6 +170,10 @@ def generate_launch_description():
             "enable_goto_output": control_enabled,
             "enable_aux_output": LaunchConfiguration("enable_aux_output"),
             "required_ned_frame_id": LaunchConfiguration("required_ned_frame_id"),
+            "pose_timeout_s": LaunchConfiguration("pose_timeout_s"),
+            "goto_max_reference_skew_s": LaunchConfiguration(
+                "goto_max_reference_skew_s"
+            ),
             "geofence_safety_inset_m": LaunchConfiguration(
                 "geofence_safety_inset_m"
             ),
@@ -202,6 +206,8 @@ def generate_launch_description():
         DeclareLaunchArgument("dry_run", default_value="true"),
         DeclareLaunchArgument("enable_aux_output", default_value="false"),
         DeclareLaunchArgument("required_ned_frame_id", default_value="robotx_rtk_ned"),
+        DeclareLaunchArgument("pose_timeout_s", default_value="3.0"),
+        DeclareLaunchArgument("goto_max_reference_skew_s", default_value="0.5"),
         DeclareLaunchArgument("geofence_safety_inset_m", default_value="3.0"),
         DeclareLaunchArgument("keep_out_safety_clearance_m", default_value="3.0"),
         DeclareLaunchArgument("keep_out_detour_margin_m", default_value="1.0"),

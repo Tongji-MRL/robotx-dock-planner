@@ -15,11 +15,12 @@ def generate_launch_description():
         DeclareLaunchArgument("vehicle_id", default_value="usv"),
         DeclareLaunchArgument("report_seq_start", default_value="0"),
         DeclareLaunchArgument("required_ned_frame_id", default_value="robotx_rtk_ned"),
+        DeclareLaunchArgument("pose_timeout_s", default_value="3.0"),
         DeclareLaunchArgument("goto_target_topic", default_value="/safe_passage/goto/target"),
         DeclareLaunchArgument("goto_status_topic", default_value="/safe_passage/goto/status"),
         DeclareLaunchArgument("goto_odom_topic", default_value="/mavros/local_position/odom"),
         DeclareLaunchArgument("goto_frame_id", default_value="map"),
-        DeclareLaunchArgument("goto_max_reference_skew_s", default_value="0.2"),
+        DeclareLaunchArgument("goto_max_reference_skew_s", default_value="0.5"),
         DeclareLaunchArgument("geofence_safety_inset_m", default_value="3.0"),
         DeclareLaunchArgument("keep_out_safety_clearance_m", default_value="3.0"),
         DeclareLaunchArgument("keep_out_detour_margin_m", default_value="1.0"),
@@ -58,6 +59,9 @@ def generate_launch_description():
                     LaunchConfiguration("report_seq_start"), value_type=int
                 ),
                 "required_ned_frame_id": LaunchConfiguration("required_ned_frame_id"),
+                "pose_timeout_s": ParameterValue(
+                    LaunchConfiguration("pose_timeout_s"), value_type=float
+                ),
                 "goto_target_topic": LaunchConfiguration("goto_target_topic"),
                 "goto_status_topic": LaunchConfiguration("goto_status_topic"),
                 "goto_odom_topic": LaunchConfiguration("goto_odom_topic"),

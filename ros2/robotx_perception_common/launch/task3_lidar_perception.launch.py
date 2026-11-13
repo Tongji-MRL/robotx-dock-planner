@@ -37,7 +37,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("process_period_s", default_value="0.5"),
         DeclareLaunchArgument("coarse_timeout_s", default_value="30.0"),
-        DeclareLaunchArgument("pose_timeout_s", default_value="2.0"),
+        DeclareLaunchArgument("pose_timeout_s", default_value="3.0"),
         DeclareLaunchArgument("roi_radius_m", default_value="25.0"),
         DeclareLaunchArgument("min_confidence", default_value="0.20"),
         DeclareLaunchArgument("detector_mode", default_value="seeded_lines"),

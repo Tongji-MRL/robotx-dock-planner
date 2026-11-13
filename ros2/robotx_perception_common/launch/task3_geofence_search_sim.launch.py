@@ -25,7 +25,7 @@ def generate_launch_description():
                 "output_topic": "/tongji_mrl/twave/task3/dock_perception",
                 "detector_mode": "unseeded_lines",
                 "process_period_s": 0.2,
-                "pose_timeout_s": 2.0,
+                "pose_timeout_s": 3.0,
                 "local_min_confidence": 0.30,
                 "local_z_min_m": -0.35,
                 "local_z_max_m": 0.85,
